@@ -28,7 +28,7 @@ class AutoClean(_PluginBase):
     # 插件图标
     plugin_icon = "clean.png"
     # 插件版本
-    plugin_version = "2.1.2"
+    plugin_version = "2.1.3"
     # 插件作者
     plugin_author = "thsrite"
     # 作者主页
@@ -224,6 +224,11 @@ class AutoClean(_PluginBase):
                     continue
 
                 for history in transferhis_list:
+                    if not history.dest_fileitem:
+                        logger.warning(
+                            f"跳过清理历史记录 id={history.id}：dest_fileitem 为 None"
+                        )
+                        continue
                     # 册除媒体库文件
                     if clean_type in ["dest", "all"]:
                         dest_fileitem = schemas.FileItem(**history.dest_fileitem)
