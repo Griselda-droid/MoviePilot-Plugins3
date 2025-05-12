@@ -98,34 +98,34 @@ class AutoClean(_PluginBase):
                     self._scheduler.print_jobs()
                     self._scheduler.start()
 
-def __get_clean_date(self, deltatime: str = None):
-    """
-    清理日期。支持两种形式的 deltatime：
-    1) 如果是整数（天数），返回当前时间减去对应天数后的日期字符串；
-    2) 如果是 'YYYY-MM-DD' 格式的字符串，直接原样返回。
-    """
-    current_time = datetime.now()
-    if deltatime:
-        # 如果传入的是形如 '2025-04-07' 的日期，直接返回
-        if isinstance(deltatime, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', deltatime):
-            return deltatime
-        # 否则尝试当作天数来处理
-        try:
-            days = int(deltatime)
-        except ValueError:
-            logger.error(f"无效的清理天数：{deltatime}，必须是整数或 YYYY-MM-DD 格式")
-            raise
-        days_ago = current_time - timedelta(days=days)
-    else:
-        # 全局 cleandate 也同样处理
-        try:
-            days = int(self._cleandate)
-        except ValueError:
-            logger.error(f"无效的全局清理天数：{self._cleandate}")
-            raise
-        days_ago = current_time - timedelta(days=days)
+    def __get_clean_date(self, deltatime: str = None):
+        """
+        清理日期。支持两种形式的 deltatime：
+        1) 如果是整数（天数），返回当前时间减去对应天数后的日期字符串；
+        2) 如果是 'YYYY-MM-DD' 格式的字符串，直接原样返回。
+        """
+        current_time = datetime.now()
+        if deltatime:
+            # 如果传入的是形如 '2025-04-07' 的日期，直接返回
+            if isinstance(deltatime, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', deltatime):
+                return deltatime
+            # 否则尝试当作天数来处理
+            try:
+                days = int(deltatime)
+            except ValueError:
+                logger.error(f"无效的清理天数：{deltatime}，必须是整数或 YYYY-MM-DD 格式")
+                raise
+            days_ago = current_time - timedelta(days=days)
+        else:
+            # 全局 cleandate 也同样处理
+            try:
+                days = int(self._cleandate)
+            except ValueError:
+                logger.error(f"无效的全局清理天数：{self._cleandate}")
+                raise
+            days_ago = current_time - timedelta(days=days)
 
-    return days_ago.strftime("%Y-%m-%d")
+        return days_ago.strftime("%Y-%m-%d")
 
     def __clean(self):
         """
