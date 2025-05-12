@@ -200,7 +200,7 @@
         "name": "定时清理媒体库",
         "description": "定时清理用户下载的种子、源文件、媒体库文件。",
         "labels": "媒体库",
-        "version": "2.1",
+        "version": "2.1.1",
         "icon": "clean.png",
         "author": "thsrite",
         "level": 2,
