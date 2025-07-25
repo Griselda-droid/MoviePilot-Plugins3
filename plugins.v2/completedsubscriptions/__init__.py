@@ -2,7 +2,7 @@
 
 """
 *************************************************
-***      订阅历史查看器 (CompletedSubscriptions)     ***
+***      订阅历史查看器 (CompletedSubscriptions) - 调试版     ***
 *************************************************
 - 功能：查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。
 - 作者：Gemini & 用户
@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.log import logger
 from app.plugins import _PluginBase
-# 致命修正：导入正确的、真实存在的数据模型 SubscribeHistory 和 @db_query 装饰器
 from app.db.models.subscribehistory import SubscribeHistory
 from app.db import db_query
 from app.schemas import NotificationType
@@ -25,7 +24,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.3.1" # 最终版，修正了数据库交互的根本性架构错误
+    plugin_version = "3.3.2" # 调试版，增加详细日志
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -100,19 +99,37 @@ class CompletedSubscriptions(_PluginBase):
     @db_query
     def get_subscribe_history(self, db: Session = None) -> List[SubscribeHistory]:
         """
-        致命修正：参照 BangumiColl 和 FastAPI 的正确模式，
-        通过 @db_query 获取 db 会话，并将其传递给 SubscribeHistory.list_by_type 静态方法。
+        致命修正：增加了大量的诊断日志，以确定查询失败的根本原因。
         """
+        logger.info("进入 get_subscribe_history 方法...")
         try:
-            # 调用官方的、经过验证的查询方法，而不是自己重新实现
+            # 新增日志1：查询历史记录总数，不加任何过滤条件
+            total_count = db.query(SubscribeHistory).count()
+            logger.info(f"数据库中 SubscribeHistory 表的总记录数为: {total_count}")
+
+            # 新增日志2：查询 type='movie' 的记录数
+            movie_count = db.query(SubscribeHistory).filter(SubscribeHistory.type == "movie").count()
+            logger.info(f"查询 type='movie' 的记录数: {movie_count}")
+            
+            # 新增日志3：查询 type='tv' 的记录数
+            tv_count = db.query(SubscribeHistory).filter(SubscribeHistory.type == "tv").count()
+            logger.info(f"查询 type='tv' 的记录数: {tv_count}")
+
+            # 调用官方的、经过验证的查询方法
+            logger.info(f"开始使用 list_by_type 查询电影历史，数量限制: {self._display_limit}")
             movie_history = SubscribeHistory.list_by_type(db, mtype="movie", page=1, count=self._display_limit)
+            logger.info(f"查询电影历史完成，获取到 {len(movie_history)} 条记录。")
+
+            logger.info(f"开始使用 list_by_type 查询剧集历史，数量限制: {self._display_limit}")
             tv_history = SubscribeHistory.list_by_type(db, mtype="tv", page=1, count=self._display_limit)
+            logger.info(f"查询剧集历史完成，获取到 {len(tv_history)} 条记录。")
             
             # 合并并按完成时间排序
             all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
+            logger.info(f"合并排序后，最终处理 {len(all_history)} 条记录。")
             return all_history
         except Exception as e:
-            logger.error(f"【{self.plugin_name}】：获取订阅历史失败: {str(e)}")
+            logger.error(f"【{self.plugin_name}】：在 get_subscribe_history 方法中获取订阅历史失败: {str(e)}", exc_info=True)
             return []
 
     def run_check(self):
@@ -121,7 +138,6 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 调用自己实现的、正确的数据库查询方法
             all_history = self.get_subscribe_history()
 
             if not all_history:
