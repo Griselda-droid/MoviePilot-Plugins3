@@ -17,11 +17,11 @@
             "v1.0": "MoviePilot V2 版本站点数据统计插件"
         }
     },
-	"completed_subscriptions": {
+"completed_subscriptions": {
     "name": "已完成订阅查看器",
     "description": "获取并显示所有已完成的订阅及其订阅用户。",
     "labels": "工具&日志",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "icon": "task-complete.png",
     "author": "Gemini & 用户",
     "level": 1,
