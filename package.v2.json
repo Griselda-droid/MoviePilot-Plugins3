@@ -415,17 +415,21 @@
             "v1.3": "新增一些Trackers"
         }
     },
-    "completed_subscriptions": {
+"completed_subscriptions": {
     "name": "已完成订阅查看器",
     "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
     "labels": "工具&日志",
-    "version": "1.4.2",
-    "icon": "task-complete.png",
+    "version": "1.5.0",
+    "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
     "author": "Gemini & 用户",
     "level": 1,
     "history": {
-        "v1.4.0": "致命修正：参照范例修正了获取订阅列表的方式，使用 `app.db.subscribe_oper.SubscribeOper`，彻底移除了所有不存在的 `Helper` 模块依赖。",
-        "v1.3.0": "重大修正：移除了所有错误的UserHelper/Users模块依赖，采用正确的从Subscribe对象直接获取用户名的方式。",
+        "v1.5.0": "致命修正：参照范例实现了所有必须的抽象方法（get_api, get_page, get_command），解决了无法实例化类的错误。",
+        "v1.4.3": "根据用户的明确指示，将图标地址更新为 `SubscribeAssistant` 的图标。",
+        "v1.4.2": "使用了真实有效的公共图标URL，彻底解决了图标404的问题。",
+        "v1.4.1": "修正了图标路径，使用公网URL替代本地文件。",
+        "v1.4.0": "致命修正：参照范例修正了获取订阅列表的方式。",
+        "v1.3.0": "重大修正：移除了所有错误的UserHelper/Users模块依赖。",
         "v1.2.0": "参照`SubscribeAssistant`重构，实现完整的服务注册和UI配置界面。"
     }
 }

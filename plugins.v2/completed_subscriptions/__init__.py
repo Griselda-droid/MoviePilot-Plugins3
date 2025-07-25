@@ -15,7 +15,6 @@ from apscheduler.triggers.cron import CronTrigger
 # 从 app 核心模块导入必要的、真实存在的类
 from app.log import logger
 from app.plugins import _PluginBase
-# 致命修正：从 app.db.subscribe_oper 导入 SubscribeOper
 from app.db.subscribe_oper import SubscribeOper
 from app.schemas import NotificationType
 from app.utils.timer import TimerUtils
@@ -25,8 +24,8 @@ class CompletedSubscriptions(_PluginBase):
     # 插件元信息
     plugin_name = "已完成订阅查看器"
     plugin_desc = "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。"
-    plugin_icon = "task-complete.png"
-    plugin_version = "1.4.2" # 致命修正版本
+    plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
+    plugin_version = "1.5.0" # 修正致命的抽象方法缺失错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "completed_subs_"
@@ -39,14 +38,12 @@ class CompletedSubscriptions(_PluginBase):
     _onlyonce = False
 
     # 插件核心辅助类的实例
-    # 致命修正：使用正确的类 SubscribeOper
     subscribe_oper: SubscribeOper = None
 
     def init_plugin(self, config: dict = None):
         """
         插件初始化
         """
-        # 致命修正：实例化正确的类 SubscribeOper
         self.subscribe_oper = SubscribeOper()
 
         if config:
@@ -73,8 +70,20 @@ class CompletedSubscriptions(_PluginBase):
             random_trigger = TimerUtils.random_scheduler(num_executions=1, begin_hour=2, end_hour=5)[0]
             return [{"id": f"{self.__class__.__name__}_check_random", "name": "已完成订阅检查 (随机)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": random_trigger.hour, "minute": random_trigger.minute}}]
 
+    # 致命修正：补充必须实现的抽象方法
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        pass
+        
+    def get_api(self) -> List[Dict[str, Any]]:
+        pass
+
+    def get_page(self) -> List[dict]:
+        pass
+    
+    # 致命修正结束
+
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
-        # get_form 方法内容无需修改
         return [
             {'component': 'VForm', 'content': [
                 {'component': 'VRow', 'content': [
@@ -104,7 +113,6 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 致命修正：使用正确的实例和方法获取所有订阅
             all_subscriptions = self.subscribe_oper.list()
 
             if not all_subscriptions:
