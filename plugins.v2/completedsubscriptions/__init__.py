@@ -2,7 +2,7 @@
 
 """
 *************************************************
-***      订阅历史查看器 (CompletedSubscriptions)     ***
+***      订阅历史清理工具 (CompletedSubscriptions)     ***
 *************************************************
 - 功能：查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。
 - 作者：Gemini & 用户
@@ -32,7 +32,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.3.0" # 新增删除历史记录功能
+    plugin_version = "4.3.1" # 完善预览模式日志
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -86,7 +86,6 @@ class CompletedSubscriptions(_PluginBase):
         if self._cron:
             return [{"id": f"{self.__class__.__name__}_check", "name": "订阅历史清理", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
         else:
-            # 致命修正：修改默认执行时间为固定的3点36分
             return [{"id": f"{self.__class__.__name__}_check_default", "name": "订阅历史清理 (默认)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": 3, "minute": 36}}]
 
     @staticmethod
@@ -98,7 +97,7 @@ class CompletedSubscriptions(_PluginBase):
 
     def get_page(self) -> List[dict]:
         return [
-            {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            {'component': 'div', 'text': '暂无删除记录，清理历史将在此处展示。', 'props': {'class': 'text-center text-h6 pa-4'}}
         ]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -133,13 +132,13 @@ class CompletedSubscriptions(_PluginBase):
     @db_query
     def _execute_db_operations(self, db: Session = None):
         """
-        一个专门用于执行数据库操作的私有方法，以确保 db 会话被正确注入和使用。
+        一个专门用于执行数据库操作的私有方法。
+        现在它会返回一个包含完整信息的列表，而不仅仅是历史记录本身。
         """
         logger.info("进入 _execute_db_operations 方法...")
         try:
             # 1. 查询所有历史记录
             all_history = db.query(SubscribeHistory).order_by(SubscribeHistory.date.desc()).all()
-            logger.info(f"查询完成，共获取到 {len(all_history)} 条总历史记录。")
             
             # 2. 筛选满足条件的记录
             filtered_history = []
@@ -147,7 +146,7 @@ class CompletedSubscriptions(_PluginBase):
             for item in all_history:
                 if item.username in self._users_list:
                     try:
-                        completed_time = datetime.strptime(item.date, '%Y-%m-%d %H:%M:%S')
+                        completed_time = datetime.strptime(item.date, '%Y-%-m-%-d %H:%M:%S')
                         if (current_time - completed_time) > timedelta(days=self._days_limit):
                             filtered_history.append(item)
                     except (ValueError, TypeError):
@@ -155,48 +154,60 @@ class CompletedSubscriptions(_PluginBase):
                         continue
 
             if not filtered_history:
-                logger.info(f"【{self.plugin_name}】：没有找到满足条件的订阅历史记录。")
                 return []
             
-            logger.info(f"【{self.plugin_name}】：成功筛选出 {len(filtered_history)} 条满足条件的记录，开始处理...")
-            
-            # 如果不是删除模式，直接返回筛选结果用于日志输出
-            if not self._confirm_delete:
-                return filtered_history
-
-            # 3. 执行删除操作
-            deleted_items_info = []
+            # 3. 为每一条满足条件的记录，查找其关联的文件
+            results = []
             for item in filtered_history:
-                title = item.name or "未知标题"
-                logger.info(f"--- 正在处理删除: {title} (ID: {item.id}) ---")
-                
+                associated_files = []
                 downloads = self.download_history_oper.get_last_by(
                     mtype=item.type,
                     tmdbid=item.tmdbid,
                     season=item.season if item.type == MediaType.TV.value else None
                 )
-
-                if not downloads:
-                    logger.info(f"未找到 '{title}' 关联的下载历史记录，直接删除订阅历史。")
-                else:
+                
+                if downloads:
                     for download in downloads:
                         if not download.download_hash: continue
                         transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
                         for transfer in transfers:
                             if transfer.dest_fileitem:
-                                logger.info(f"正在删除媒体库文件: {transfer.dest_fileitem.get('path')}")
-                                self.storage_chain.delete_file(FileItem(**transfer.dest_fileitem))
+                                associated_files.append(transfer.dest_fileitem.get('path'))
                             if transfer.src_fileitem:
-                                logger.info(f"正在删除源文件: {transfer.src_fileitem.get('path')}")
-                                self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
-                                eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                                associated_files.append(transfer.src_fileitem.get('path'))
+                
+                results.append({
+                    "history_item": item,
+                    "files": associated_files
+                })
 
-                # 致命修正：在删除了所有文件后，删除这条订阅历史记录
-                SubscribeHistory.delete(db, item.id)
-                logger.info(f"已删除订阅历史记录: {title} (ID: {item.id})")
-                deleted_items_info.append(item)
-
-            return deleted_items_info
+            # 4. 如果是删除模式，则执行删除
+            if self._confirm_delete:
+                for result in results:
+                    item = result["history_item"]
+                    
+                    # 重新获取一次关联记录以执行删除
+                    downloads = self.download_history_oper.get_last_by(
+                        mtype=item.type, tmdbid=item.tmdbid,
+                        season=item.season if item.type == MediaType.TV.value else None
+                    )
+                    
+                    if downloads:
+                        for download in downloads:
+                            if not download.download_hash: continue
+                            transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
+                            for transfer in transfers:
+                                if transfer.dest_fileitem:
+                                    self.storage_chain.delete_file(FileItem(**transfer.dest_fileitem))
+                                if transfer.src_fileitem:
+                                    self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
+                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                    
+                    # 删除订阅历史记录
+                    SubscribeHistory.delete(db, item.id)
+                    logger.info(f"已删除订阅历史记录: {item.name} (ID: {item.id})")
+            
+            return results
 
         except Exception as e:
             logger.error(f"【{self.plugin_name}】：在数据库操作中发生错误: {str(e)}", exc_info=True)
@@ -213,31 +224,41 @@ class CompletedSubscriptions(_PluginBase):
         if self._confirm_delete:
             logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和历史记录！")
         else:
-            logger.info(f"【{self.plugin_name}】：当前为预览模式，仅输出符合条件的媒体，不会执行任何删除操作。")
+            logger.info(f"【{self.plugin_name}】：当前为预览模式，仅输出符合条件的媒体及其关联文件。")
 
         try:
-            # 将所有数据库操作集中到一个带有 @db_query 的方法中执行
-            processed_items = self._execute_db_operations()
+            processed_results = self._execute_db_operations()
 
-            if not processed_items:
-                logger.info(f"【{self.plugin_name}】：没有处理任何记录。")
+            if not processed_results:
+                logger.info(f"【{self.plugin_name}】：没有找到任何满足条件的记录。")
                 summary_text = "扫描完成，没有找到任何满足条件的记录。"
-            elif self._confirm_delete:
-                summary_text = f"扫描完成，共删除了 {len(processed_items)} 条订阅历史及其关联文件。"
-                # 详情页功能暂不实现，因为这需要更复杂的数据持久化
-                output_lines = ["", f"--- [ {self.plugin_name} - 本次删除列表 ] ---"]
-                for item in processed_items:
-                    output_lines.append(f"  - {item.name or '未知标题'}")
-                logger.info("\n".join(output_lines))
             else:
-                summary_text = f"预览完成，共找到 {len(processed_items)} 条满足条件的记录。"
-                output_lines = ["", f"--- [ {self.plugin_name} - 预览结果 ] ---"]
-                for item in processed_items:
-                     output_lines.append(f"  - 媒体: {item.name or '未知标题'}")
-                     output_lines.append(f"  - 用户: {item.username or '未知用户'}")
-                     output_lines.append(f"  - 完成时间: {item.date or '未知时间'}")
-                     output_lines.append("  ---------------------------------")
+                logger.info(f"【{self.plugin_name}】：共找到 {len(processed_results)} 条满足条件的记录，详情如下：")
+                output_lines = ["", f"--- [ {self.plugin_name} - {'删除' if self._confirm_delete else '预览'}结果 ] ---"]
+                
+                for result in processed_results:
+                    item = result["history_item"]
+                    files = result["files"]
+                    output_lines.append(f"  - 媒体: {item.name or '未知标题'}")
+                    output_lines.append(f"  - 用户: {item.username or '未知用户'}")
+                    output_lines.append(f"  - 完成时间: {item.date or '未知时间'}")
+                    
+                    # 致命修正：在预览模式下也显示关联文件
+                    if files:
+                        output_lines.append("  - 关联文件:")
+                        for file_path in files:
+                            output_lines.append(f"    - {file_path}")
+                    else:
+                        output_lines.append("  - 关联文件: 未找到关联的下载或整理记录。")
+                    
+                    output_lines.append("  ---------------------------------")
+                
                 logger.info("\n".join(output_lines))
+
+                if self._confirm_delete:
+                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅历史及其关联文件。"
+                else:
+                    summary_text = f"预览完成，共找到 {len(processed_results)} 条满足条件的记录。如需删除，请开启“确认删除”开关。"
             
             logger.info(f"【{self.plugin_name}】任务执行完毕。{summary_text}")
             if self._notify:
@@ -258,4 +279,4 @@ class CompletedSubscriptions(_PluginBase):
         }
     
     def __update_config(self):
-        self.update_config(self.get_config_dict())
+        self.update_config(self.get_config_dict())```

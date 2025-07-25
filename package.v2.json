@@ -419,7 +419,7 @@
             "name": "已完成订阅查看器",
             "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
             "labels": "工具&日志",
-            "version": "4.3.0",
+            "version": "4.3.1",
             "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
             "author": "Gemini & 用户",
             "level": 1,
