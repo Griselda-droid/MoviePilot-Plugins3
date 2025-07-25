@@ -419,17 +419,14 @@
     "name": "已完成订阅查看器",
     "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
     "labels": "工具&日志",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
     "author": "Gemini & 用户",
     "level": 1,
     "history": {
-        "v1.6.0": "致命修正：移除了对不存在的 `.get_title()` 方法的调用，参照范例使用 `subscribe.name` 等属性手动构建标题，解决了插件静默加载失败的问题。",
-        "v1.5.0": "致命修正：参照范例实现了所有必须的抽象方法（get_api, get_page, get_command）。",
-        "v1.4.3": "根据用户的明确指示，将图标地址更新为 `SubscribeAssistant` 的图标。",
-        "v1.4.0": "致命修正：参照范例修正了获取订阅列表的方式。",
-        "v1.3.0": "重大修正：移除了所有错误的UserHelper/Users模块依赖。",
-        "v1.2.0": "参照`SubscribeAssistant`重构，实现完整的服务注册和UI配置界面。"
+        "v1.7.0": "致命修正：移除了所有可能导致静默加载失败的复杂逻辑和模块依赖（如MediaType），使用最简单、最可靠的方式获取标题，以确保插件能被正常加载。",
+        "v1.6.0": "致命修正：移除了对不存在的 `.get_title()` 方法的调用。",
+        "v1.5.0": "致命修正：参照范例实现了所有必须的抽象方法（get_api, get_page, get_command）。"
     }
 }
 }

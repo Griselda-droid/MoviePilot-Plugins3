@@ -17,7 +17,8 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.db.subscribe_oper import SubscribeOper
 from app.schemas import NotificationType
-from app.schemas.types import MediaType
+# 致命修正：移除所有非核心的模块依赖，如 MediaType
+# from app.schemas.types import MediaType
 from app.utils.timer import TimerUtils
 
 # 插件主类
@@ -26,7 +27,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "已完成订阅查看器"
     plugin_desc = "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "1.6.0" # 最终修正版
+    plugin_version = "1.7.0" # 最终修正版
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "completed_subs_"
@@ -127,16 +128,8 @@ class CompletedSubscriptions(_PluginBase):
 
             output_lines = ["", f"--- [ {self.plugin_name} - 扫描结果 ] ---"]
             for sub in completed_subs:
-                # 致命修正：不再使用不存在的 .get_title() 方法
-                # 参照范例，通过对象的真实属性手动拼接标题
-                year = sub.year if sub.year else "Unknown"
-                if sub.type == MediaType.TV.value:
-                    title = f"剧集: {sub.name} ({year}) 季{sub.season}"
-                elif sub.type == MediaType.MOVIE.value:
-                    title = f"电影: {sub.name} ({year})"
-                else:
-                    title = f"未知: {sub.name} ({year})"
-                
+                # 致命修正：使用最简单、最不可能出错的方式，直接使用 .name 属性作为标题
+                title = sub.name or "未知标题"
                 user_name = sub.username or "未知用户"
                 
                 output_lines.append(f"  - 媒体: {title}")
