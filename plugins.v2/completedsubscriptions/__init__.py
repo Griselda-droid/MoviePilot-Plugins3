@@ -9,6 +9,7 @@
 - 规范：严格参照系统数据模型和范例插件结构编写。
 """
 
+import time
 from typing import Any, Dict, List, Tuple
 from datetime import datetime, timedelta
 from apscheduler.triggers.cron import CronTrigger
@@ -18,7 +19,6 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.db.models.subscribehistory import SubscribeHistory
 from app.db import db_query
-# 新增：导入操作类和事件管理器
 from app.db.downloadhistory_oper import DownloadHistoryOper
 from app.db.transferhistory_oper import TransferHistoryOper
 from app.chain.storage import StorageChain
@@ -32,7 +32,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.1.0" # 新增删除功能
+    plugin_version = "4.2.0" # 新增配置持久化和详情页
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -45,15 +45,13 @@ class CompletedSubscriptions(_PluginBase):
     _onlyonce = False
     _days_limit = None
     _users_list = []
-    _confirm_delete = False # 新增：确认删除开关
+    _confirm_delete = False
 
-    # 新增：操作类实例
     download_history_oper: DownloadHistoryOper = None
     transfer_history_oper: TransferHistoryOper = None
     storage_chain: StorageChain = None
 
     def init_plugin(self, config: dict = None):
-        # 新增：实例化操作类
         self.download_history_oper = DownloadHistoryOper()
         self.transfer_history_oper = TransferHistoryOper()
         self.storage_chain = StorageChain()
@@ -65,18 +63,21 @@ class CompletedSubscriptions(_PluginBase):
             self._onlyonce = config.get("onlyonce", False)
             
             days_str = config.get("days_limit")
-            self._days_limit = int(days_str) if days_str else None
+            self._days_limit = int(days_str) if days_str and str(days_str).isdigit() else None
             
             users_str = config.get("users_list", "")
             self._users_list = [user.strip() for user in users_str.split('\n') if user.strip()]
 
             self._confirm_delete = config.get("confirm_delete", False)
+        
+        # 致命修正：在初始化结束时，调用 __update_config 来持久化配置
+        self.__update_config()
 
         if self._onlyonce:
             logger.info(f"【{self.plugin_name}】：配置了“立即运行一次”，任务即将开始...")
             self.run_check()
             self._onlyonce = False
-            self.update_config(self.get_config_dict())
+            self.__update_config()
 
     def get_state(self) -> bool:
         return self._enabled
@@ -84,7 +85,7 @@ class CompletedSubscriptions(_PluginBase):
     def get_service(self) -> List[Dict[str, Any]]:
         if not self.get_state(): return []
         if self._cron:
-            return [{"id": f"{self.__class__.__name__}_check", "name": "订阅历史检查", "trigger": CronTrigger.from_crab(self._cron), "func": self.run_check, "kwargs": {}}]
+            return [{"id": f"{self.__class__.__name__}_check", "name": "订阅历史检查", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
         else:
             return [{"id": f"{self.__class__.__name__}_check_random", "name": "订阅历史检查 (默认)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": 3, "minute": "*/30"}}]
 
@@ -96,7 +97,39 @@ class CompletedSubscriptions(_PluginBase):
         return []
 
     def get_page(self) -> List[dict]:
-        return []
+        """
+        致命修正：实现详情页，展示删除历史记录。
+        """
+        # 查询已保存的删除历史
+        deletion_history = self.get_data('deletion_history')
+        if not deletion_history:
+            return [
+                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            ]
+        
+        # 数据按时间降序排序
+        deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
+        
+        # 拼装页面
+        cards = []
+        for item in deletion_history:
+            cards.append({
+                'component': 'VCard', 'props': {'class': 'ma-2'}, 'content': [
+                    {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                        {'component': 'div', 'content': [
+                            {'component': 'VCardTitle', 'text': item.get("title", "未知标题")},
+                            {'component': 'VCardSubtitle', 'text': f"用户: {item.get('user', '未知')}"},
+                            {'component': 'VCardText', 'text': f"删除时间: {item.get('delete_time', '未知')}"}
+                        ]},
+                        {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
+                            {'component': 'VImg', 'props': {'src': item.get('image', ''), 'cover': True}}
+                        ]}
+                    ]}
+                ]
+            })
+
+        return [{'component': 'div', 'content': cards}]
+
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -114,7 +147,6 @@ class CompletedSubscriptions(_PluginBase):
                 ]},
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
-                    # 新增：确认删除开关
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件，请谨慎操作！', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
@@ -159,7 +191,6 @@ class CompletedSubscriptions(_PluginBase):
                 logger.info(f"【{self.plugin_name}】：订阅历史记录为空。")
                 return
 
-            # 筛选出满足天数和用户条件的记录
             filtered_history = []
             current_time = datetime.now()
             for item in all_history:
@@ -178,16 +209,16 @@ class CompletedSubscriptions(_PluginBase):
 
             logger.info(f"【{self.plugin_name}】：成功筛选出 {len(filtered_history)} 条满足条件的记录，开始处理...")
             
-            deleted_count = 0
-            # 遍历筛选出的历史记录，执行输出或删除
+            # 用于保存本次删除的记录
+            newly_deleted_items = []
+
             for item in filtered_history:
                 title = item.name or "未知标题"
                 user_name = item.username or "未知用户"
                 completed_time = item.date or "未知时间"
                 
-                logger.info(f"--- 正在处理: {title} | 用户: {user_name} | 完成于: {completed_time} ---")
-
-                # 根据订阅历史的 tmdbid 和 季/集 信息，查找关联的下载历史
+                log_prefix = f"--- 正在处理: {title} | 用户: {user_name} | 完成于: {completed_time} ---"
+                
                 downloads = self.download_history_oper.get_last_by(
                     mtype=item.type,
                     tmdbid=item.tmdbid,
@@ -195,24 +226,19 @@ class CompletedSubscriptions(_PluginBase):
                 )
                 
                 if not downloads:
-                    logger.info(f"未找到 '{title}' 关联的下载历史记录。")
+                    logger.info(f"{log_prefix}\n未找到关联的下载历史记录。")
                     continue
 
                 if not self._confirm_delete:
-                     logger.info(f"预览模式：找到 {len(downloads)} 条关联下载记录，跳过删除。")
+                     logger.info(f"{log_prefix}\n预览模式：找到 {len(downloads)} 条关联下载记录，跳过删除。")
                      continue
 
                 # 删除模式
+                item_deleted = False
                 for download in downloads:
-                    if not download.download_hash:
-                        logger.debug(f"下载历史 {download.id} ({download.title}) 未获取到 download_hash，跳过。")
-                        continue
-                    
-                    # 根据 hash 获取转移记录
+                    if not download.download_hash: continue
                     transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
-                    if not transfers:
-                        logger.warning(f"下载历史 {download.download_hash} 未查询到转移记录，跳过。")
-                        continue
+                    if not transfers: continue
 
                     for transfer in transfers:
                         # 删除媒体库文件
@@ -220,22 +246,34 @@ class CompletedSubscriptions(_PluginBase):
                             dest_fileitem = FileItem(**transfer.dest_fileitem)
                             logger.info(f"正在删除媒体库文件: {dest_fileitem.path}")
                             if self.storage_chain.delete_file(dest_fileitem):
-                                deleted_count += 1
+                                item_deleted = True
                         
                         # 删除源文件
                         if transfer.src_fileitem:
                             src_fileitem = FileItem(**transfer.src_fileitem)
                             logger.info(f"正在删除源文件: {src_fileitem.path}")
                             if self.storage_chain.delete_file(src_fileitem):
-                                # 发送事件
-                                eventmanager.send_event(
-                                    EventType.DownloadFileDeleted,
-                                    {"src": transfer.src}
-                                )
-                                deleted_count += 1
+                                eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                                item_deleted = True
+                
+                # 如果该条目确实执行了删除操作，则记录下来
+                if item_deleted:
+                    newly_deleted_items.append({
+                        "title": title,
+                        "user": user_name,
+                        "image": item.poster or item.backdrop,
+                        "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    })
+
+            # 更新详情页的删除历史
+            if newly_deleted_items:
+                all_deleted_history = self.get_data('deletion_history') or []
+                all_deleted_history.extend(newly_deleted_items)
+                # 保留最近的200条记录
+                self.save_data('deletion_history', all_deleted_history[-200:])
 
             if self._confirm_delete:
-                summary_text = f"扫描完成，共找到 {len(filtered_history)} 条满足条件的记录，并成功删除了 {deleted_count} 个关联文件。"
+                summary_text = f"扫描完成，共找到 {len(filtered_history)} 条满足条件的记录，并处理了 {len(newly_deleted_items)} 个媒体的关联文件。"
             else:
                 summary_text = f"预览完成，共找到 {len(filtered_history)} 条满足条件的记录。如需删除，请开启“确认删除”开关。"
             
@@ -248,11 +286,17 @@ class CompletedSubscriptions(_PluginBase):
 
     def get_config_dict(self):
         return { 
-            "enabled": False, 
-            "notify": False, 
-            "cron": "", 
-            "onlyonce": False, 
-            "days_limit": None, 
-            "users_list": "",
-            "confirm_delete": False
+            "enabled": self._enabled, 
+            "notify": self._notify, 
+            "cron": self._cron, 
+            "onlyonce": self._onlyonce, 
+            "days_limit": self._days_limit, 
+            "users_list": "\n".join(self._users_list),
+            "confirm_delete": self._confirm_delete
         }
+    
+    def __update_config(self):
+        """
+        致命修正：新增一个私有辅助方法，用于将当前配置保存回数据库。
+        """
+        self.update_config(self.get_config_dict())
