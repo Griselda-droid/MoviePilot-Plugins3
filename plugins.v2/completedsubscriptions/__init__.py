@@ -25,7 +25,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.3.0" # 最终版，修正了数据库交互的根本性架构错误
+    plugin_version = "3.3.1" # 最终版，修正了数据库交互的根本性架构错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -100,12 +100,14 @@ class CompletedSubscriptions(_PluginBase):
     @db_query
     def get_subscribe_history(self, db: Session = None) -> List[SubscribeHistory]:
         """
-        致命修正：参照 BangumiColl 范例，自己实现一个带有 @db_query 装饰器的方法来查询数据库。
+        致命修正：参照 BangumiColl 和 FastAPI 的正确模式，
+        通过 @db_query 获取 db 会话，并将其传递给 SubscribeHistory.list_by_type 静态方法。
         """
         try:
-            # 查询电影和电视剧的历史记录
-            movie_history = db.query(SubscribeHistory).filter(SubscribeHistory.type == "movie").order_by(SubscribeHistory.date.desc()).limit(self._display_limit).all()
-            tv_history = db.query(SubscribeHistory).filter(SubscribeHistory.type == "tv").order_by(SubscribeHistory.date.desc()).limit(self._display_limit).all()
+            # 调用官方的、经过验证的查询方法，而不是自己重新实现
+            movie_history = SubscribeHistory.list_by_type(db, mtype="movie", page=1, count=self._display_limit)
+            tv_history = SubscribeHistory.list_by_type(db, mtype="tv", page=1, count=self._display_limit)
+            
             # 合并并按完成时间排序
             all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
             return all_history
@@ -119,7 +121,7 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 致命修正：调用自己实现的、正确的数据库查询方法
+            # 调用自己实现的、正确的数据库查询方法
             all_history = self.get_subscribe_history()
 
             if not all_history:
