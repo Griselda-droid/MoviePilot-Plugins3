@@ -23,7 +23,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.2.0" # 最终版，修正了数据库交互的根本性错误
+    plugin_version = "3.2.1" # 最终版，修正了数据库交互的根本性架构错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
