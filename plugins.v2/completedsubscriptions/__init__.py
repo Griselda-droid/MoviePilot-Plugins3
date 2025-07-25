@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.6.1" # 更新提示文本
+    plugin_version = "4.6.2" # 增加详情页分页显示
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -159,9 +159,13 @@ class CompletedSubscriptions(_PluginBase):
         # 将历史记录按删除时间降序排序，最新的显示在最前面
         deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         
+        # 致命修正：实现分页逻辑，只取最近的200条用于显示
+        total_records = len(deletion_history)
+        display_records = deletion_history[:200]
+        
         # 动态构建卡片列表以展示每一条删除记录
         cards = []
-        for item in deletion_history:
+        for item in display_records:
             cards.append({
                 'component': 'VCard', 'props': {'class': 'ma-2'}, 'content': [
                     {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
@@ -177,14 +181,31 @@ class CompletedSubscriptions(_PluginBase):
                 ]
             })
         
-        # 使用一个带有 grid 样式的 div 包裹所有卡片，实现响应式多列布局
+        # 构造包含分页提示和卡片列表的完整页面结构
         return [{
             'component': 'div',
-            'props': {
-                'class': 'grid gap-3 grid-info-card',
-            },
-            'content': cards
+            'content': [
+                # 分页提示信息
+                {
+                    'component': 'VAlert',
+                    'props': {
+                        'type': 'info',
+                        'variant': 'tonal',
+                        'class': 'mb-4',
+                        'text': f"正在显示最近 {len(display_records)} 条删除记录，共存储 {total_records} 条。"
+                    }
+                },
+                # 使用 grid 样式的 div 包裹所有卡片，实现响应式多列布局
+                {
+                    'component': 'div',
+                    'props': {
+                        'class': 'grid gap-3 grid-info-card',
+                    },
+                    'content': cards
+                }
+            ]
         }]
+
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -210,7 +231,6 @@ class CompletedSubscriptions(_PluginBase):
                 ]},
                 {'component': 'VRow', 'content': [
                      {'component': 'VCol', 'props': {'cols': 12}, 'content': [
-                         # 致命修正：更新提示文本
                          {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅历史。'}}
                      ]}
                 ]}
@@ -318,8 +338,8 @@ class CompletedSubscriptions(_PluginBase):
                 if deleted_items_for_page:
                     all_deleted_history = self.get_data('deletion_history') or []
                     all_deleted_history.extend(deleted_items_for_page)
-                    # 仅保留最近的200条记录，防止数据文件过大
-                    self.save_data('deletion_history', all_deleted_history[-200:])
+                    # 致命修正：仅保留最近的1000条记录，防止数据文件过大
+                    self.save_data('deletion_history', all_deleted_history[-1000:])
 
             return results
 
