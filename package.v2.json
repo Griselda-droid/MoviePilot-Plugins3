@@ -17,20 +17,21 @@
             "v1.0": "MoviePilot V2 版本站点数据统计插件"
         }
     },
-    "completed_subscriptions": {
-        "name": "已完成订阅查看器",
-        "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
-        "labels": "工具&日志",
-        "version": "1.2.0",
-        "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/completed.png",
-        "author": "Gemini & 用户",
-        "level": 1,
-        "history": {
-            "v1.2.0": "参照`SubscribeAssistant`重构，实现完整的服务注册和UI配置界面。",
-            "v1.0.1": "修正了用户管理模块的导入错误。",
-            "v1.0.0": "插件首次创建。"
+"completed_subscriptions": {
+    "name": "已完成订阅查看器",
+    "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
+    "labels": "工具&日志",
+    "version": "1.3.0",
+    "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/completed.png",
+    "author": "Gemini & 用户",
+    "level": 1,
+    "history": {
+        "v1.3.0": "重大修正：移除了所有错误的UserHelper/Users模块依赖，采用正确的从Subscribe对象直接获取用户名的方式。",
+        "v1.2.0": "参照`SubscribeAssistant`重构，实现完整的服务注册和UI配置界面。",
+        "v1.0.1": "修正了用户管理模块的导入错误。",
+        "v1.0.0": "插件首次创建。"
     }
-    },
+},
     "BrushFlow": {
         "name": "站点刷流",
         "description": "自动托管刷流，将会提高对应站点的访问频率。",
