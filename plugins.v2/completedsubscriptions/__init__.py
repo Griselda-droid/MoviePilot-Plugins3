@@ -2,7 +2,7 @@
 
 """
 *************************************************
-***      已完成订阅查看器 (CompletedSubscriptions)     ***
+***      订阅历史查看器 (CompletedSubscriptions)     ***
 *************************************************
 - 功能：查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。
 - 作者：Gemini & 用户
@@ -14,8 +14,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.log import logger
 from app.plugins import _PluginBase
-# 致命修正：导入正确的、真实存在的数据模型 SubscribeHistory
-from app.db.models.subscribehistory import SubscribeHistory
+# 致命修正：导入正确的、真实存在的“操作类” SubscribeHistoryOper
+from app.db.subscribehistory_oper import SubscribeHistoryOper
 from app.schemas import NotificationType
 
 class CompletedSubscriptions(_PluginBase):
@@ -23,7 +23,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.0.0" # 最终版，修正了数据模型的根本性错误
+    plugin_version = "3.1.0" # 最终版，修正了数据库交互的根本性错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -34,9 +34,15 @@ class CompletedSubscriptions(_PluginBase):
     _notify = False
     _cron = None
     _onlyonce = False
-    _display_limit = 50 # 默认显示最近50条
+    _display_limit = 50
+
+    # 致命修正：使用正确的操作类 SubscribeHistoryOper
+    history_oper: SubscribeHistoryOper = None
 
     def init_plugin(self, config: dict = None):
+        # 致命修正：实例化正确的操作类
+        self.history_oper = SubscribeHistoryOper()
+
         if config:
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
@@ -101,11 +107,10 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 致命修正：使用正确的 SubscribeHistory 模型和方法进行查询
-            movie_history = SubscribeHistory.list_by_type(mtype="movie", page=1, count=self._display_limit)
-            tv_history = SubscribeHistory.list_by_type(mtype="tv", page=1, count=self._display_limit)
+            # 致命修正：使用正确的操作类实例 self.history_oper 进行查询
+            movie_history = self.history_oper.list_by_type(mtype="movie", page=1, count=self._display_limit)
+            tv_history = self.history_oper.list_by_type(mtype="tv", page=1, count=self._display_limit)
             
-            # 合并并按完成时间排序
             all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
 
             if not all_history:
@@ -115,7 +120,6 @@ class CompletedSubscriptions(_PluginBase):
             logger.info(f"【{self.plugin_name}】：成功获取到 {len(all_history)} 条订阅历史记录，正在整理输出...")
             output_lines = ["", f"--- [ {self.plugin_name} - 扫描结果 ] ---"]
             for item in all_history:
-                # 致命修正：使用历史记录对象的属性
                 title = item.name or "未知标题"
                 user_name = item.username or "未知用户"
                 completed_time = item.date or "未知时间"
