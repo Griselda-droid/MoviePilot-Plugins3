@@ -11,11 +11,13 @@
 
 from typing import Any, Dict, List, Tuple
 from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy.orm import Session
 
 from app.log import logger
 from app.plugins import _PluginBase
-# 致命修正：导入唯一的、正确的、管理订阅生命周期的操作类 SubscribeOper
-from app.db.subscribe_oper import SubscribeOper
+# 致命修正：导入正确的、真实存在的数据模型 SubscribeHistory 和 @db_query 装饰器
+from app.db.models.subscribehistory import SubscribeHistory
+from app.db import db_query
 from app.schemas import NotificationType
 
 class CompletedSubscriptions(_PluginBase):
@@ -23,7 +25,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.2.1" # 最终版，修正了数据库交互的根本性架构错误
+    plugin_version = "3.3.0" # 最终版，修正了数据库交互的根本性架构错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -36,13 +38,7 @@ class CompletedSubscriptions(_PluginBase):
     _onlyonce = False
     _display_limit = 50
 
-    # 致命修正：使用正确的、唯一的订阅操作类 SubscribeOper
-    subscribe_oper: SubscribeOper = None
-
     def init_plugin(self, config: dict = None):
-        # 致命修正：实例化正确的操作类
-        self.subscribe_oper = SubscribeOper()
-
         if config:
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
@@ -101,17 +97,30 @@ class CompletedSubscriptions(_PluginBase):
     def stop_service(self):
         pass
 
+    @db_query
+    def get_subscribe_history(self, db: Session = None) -> List[SubscribeHistory]:
+        """
+        致命修正：参照 BangumiColl 范例，自己实现一个带有 @db_query 装饰器的方法来查询数据库。
+        """
+        try:
+            # 查询电影和电视剧的历史记录
+            movie_history = db.query(SubscribeHistory).filter(SubscribeHistory.type == "movie").order_by(SubscribeHistory.date.desc()).limit(self._display_limit).all()
+            tv_history = db.query(SubscribeHistory).filter(SubscribeHistory.type == "tv").order_by(SubscribeHistory.date.desc()).limit(self._display_limit).all()
+            # 合并并按完成时间排序
+            all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
+            return all_history
+        except Exception as e:
+            logger.error(f"【{self.plugin_name}】：获取订阅历史失败: {str(e)}")
+            return []
+
     def run_check(self):
         """
         插件的核心执行逻辑。
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 致命修正：使用正确的 SubscribeOper 实例，并调用其下属的、真实存在的 list_history_by_type 方法
-            movie_history = self.subscribe_oper.list_history_by_type(mtype="movie", page=1, count=self._display_limit)
-            tv_history = self.subscribe_oper.list_history_by_type(mtype="tv", page=1, count=self._display_limit)
-            
-            all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
+            # 致命修正：调用自己实现的、正确的数据库查询方法
+            all_history = self.get_subscribe_history()
 
             if not all_history:
                 logger.info(f"【{self.plugin_name}】：订阅历史记录为空。")
