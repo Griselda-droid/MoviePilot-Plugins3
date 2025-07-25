@@ -419,7 +419,7 @@
         "name": "订阅历史清理工具",
         "description": "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。",
         "labels": "工具&日志",
-        "version": "4.5.0",
+        "version": "4.6.0",
         "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
         "author": "Gemini & 用户",
         "level": 1,
