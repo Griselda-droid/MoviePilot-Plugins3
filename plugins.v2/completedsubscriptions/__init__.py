@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.6.0" # 美化详情页并增加完整注释
+    plugin_version = "4.6.1" # 更新提示文本
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -151,7 +151,7 @@ class CompletedSubscriptions(_PluginBase):
         # 从插件的持久化数据中读取已保存的删除历史
         deletion_history = self.get_data('deletion_history')
         if not deletion_history:
-            # 如果没有历史记录，显示一段提示文字
+            # 如果没有历史记录，显示提示信息
             return [
                 {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
             ]
@@ -176,8 +176,8 @@ class CompletedSubscriptions(_PluginBase):
                     ]}
                 ]
             })
-
-        # 致命修正：使用一个带有 grid 样式的 div 包裹所有卡片，实现响应式多列布局
+        
+        # 使用一个带有 grid 样式的 div 包裹所有卡片，实现响应式多列布局
         return [{
             'component': 'div',
             'props': {
@@ -210,7 +210,8 @@ class CompletedSubscriptions(_PluginBase):
                 ]},
                 {'component': 'VRow', 'content': [
                      {'component': 'VCol', 'props': {'cols': 12}, 'content': [
-                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会根据条件过滤并输出或删除结果。'}}
+                         # 致命修正：更新提示文本
+                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅历史。'}}
                      ]}
                 ]}
             ]}
