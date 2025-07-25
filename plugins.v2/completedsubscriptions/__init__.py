@@ -22,7 +22,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "已完成订阅查看器"
     plugin_desc = "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "2.1.0" # 修正了目录名和属性错误
+    plugin_version = "2.1.2" # 修正了致命的属性错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "completed_subs_"
@@ -57,7 +57,6 @@ class CompletedSubscriptions(_PluginBase):
         if self._cron:
             return [{"id": f"{self.__class__.__name__}_check", "name": "已完成订阅检查", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
         else:
-            # 兼容性修正：移除 TimerUtils 的使用，直接返回一个默认的CRON任务
             return [{"id": f"{self.__class__.__name__}_check_random", "name": "已完成订阅检查 (默认)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": 3, "minute": "*/30"}}]
 
     @staticmethod
@@ -95,6 +94,9 @@ class CompletedSubscriptions(_PluginBase):
         pass
 
     def run_check(self):
+        """
+        插件的核心执行逻辑。
+        """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
             all_subscriptions = self.subscribe_oper.list()
