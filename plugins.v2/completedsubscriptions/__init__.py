@@ -14,8 +14,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.log import logger
 from app.plugins import _PluginBase
-# 致命修正：导入正确的、真实存在的“操作类” SubscribeHistoryOper
-from app.db.subscribehistory_oper import SubscribeHistoryOper
+# 致命修正：导入唯一的、正确的、管理订阅生命周期的操作类 SubscribeOper
+from app.db.subscribe_oper import SubscribeOper
 from app.schemas import NotificationType
 
 class CompletedSubscriptions(_PluginBase):
@@ -23,7 +23,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史查看器"
     plugin_desc = "查询订阅历史记录，并清晰地展示已完成订阅的媒体以及对应的用户。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "3.1.0" # 最终版，修正了数据库交互的根本性错误
+    plugin_version = "3.2.0" # 最终版，修正了数据库交互的根本性错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_viewer_"
@@ -36,12 +36,12 @@ class CompletedSubscriptions(_PluginBase):
     _onlyonce = False
     _display_limit = 50
 
-    # 致命修正：使用正确的操作类 SubscribeHistoryOper
-    history_oper: SubscribeHistoryOper = None
+    # 致命修正：使用正确的、唯一的订阅操作类 SubscribeOper
+    subscribe_oper: SubscribeOper = None
 
     def init_plugin(self, config: dict = None):
         # 致命修正：实例化正确的操作类
-        self.history_oper = SubscribeHistoryOper()
+        self.subscribe_oper = SubscribeOper()
 
         if config:
             self._enabled = config.get("enabled", False)
@@ -107,9 +107,9 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         try:
-            # 致命修正：使用正确的操作类实例 self.history_oper 进行查询
-            movie_history = self.history_oper.list_by_type(mtype="movie", page=1, count=self._display_limit)
-            tv_history = self.history_oper.list_by_type(mtype="tv", page=1, count=self._display_limit)
+            # 致命修正：使用正确的 SubscribeOper 实例，并调用其下属的、真实存在的 list_history_by_type 方法
+            movie_history = self.subscribe_oper.list_history_by_type(mtype="movie", page=1, count=self._display_limit)
+            tv_history = self.subscribe_oper.list_history_by_type(mtype="tv", page=1, count=self._display_limit)
             
             all_history = sorted(movie_history + tv_history, key=lambda x: x.date, reverse=True)[:self._display_limit]
 
