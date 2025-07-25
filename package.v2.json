@@ -415,21 +415,21 @@
             "v1.3": "新增一些Trackers"
         }
     },
-{
-    "CompletedSubscriptions": {
-        "name": "已完成订阅查看器",
-        "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
-        "labels": "工具&日志",
-        "version": "2.1.3",
-        "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
-        "author": "Gemini & 用户",
-        "level": 1,
-        "history": {
-            "v2.1.2": "致命修正：修正了运行时错误`'Subscribe' object has no attribute 'status'`，使用了正确的`state`属性。",
-            "v2.1.1": "致命修正：根据用户提供的范例，修正了`package.v2.json`的文件格式。",
-            "v2.1.0": "致命修正：修正了插件目录名大小写问题和`Subscribe`对象无`status`属性的运行时错误。",
-            "v2.0.0": "升级为V2原生版本，并修正了目录结构。"
+    {
+        "CompletedSubscriptions": {
+            "name": "已完成订阅查看器",
+            "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
+            "labels": "工具&日志",
+            "version": "2.1.3",
+            "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png",
+            "author": "Gemini & 用户",
+            "level": 1,
+            "history": {
+                "v2.1.2": "致命修正：修正了运行时错误`'Subscribe' object has no attribute 'status'`，使用了正确的`state`属性。",
+                "v2.1.1": "致命修正：根据用户提供的范例，修正了`package.v2.json`的文件格式。",
+                "v2.1.0": "致命修正：修正了插件目录名大小写问题和`Subscribe`对象无`status`属性的运行时错误。",
+                "v2.0.0": "升级为V2原生版本，并修正了目录结构。"
+            }
         }
     }
-}
 }
