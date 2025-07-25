@@ -17,6 +17,17 @@
             "v1.0": "MoviePilot V2 版本站点数据统计插件"
         }
     },
+	"completed_subscriptions": {
+    "id": "completed_subscriptions_viewer",
+    "name": "已完成订阅查看器",
+    "description": "获取并显示所有已完成的订阅及其订阅用户。",
+    "author": "Gemini",
+    "version": "1.0",
+    "source": "completed_subscriptions.py",
+    "icon": "🧩",
+    "requirements": [],
+    "rely_on": []
+    },
     "BrushFlow": {
         "name": "站点刷流",
         "description": "自动托管刷流，将会提高对应站点的访问频率。",
