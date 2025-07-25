@@ -25,7 +25,7 @@ class CompletedSubscriptions(_PluginBase):
     # 插件元信息
     plugin_name = "已完成订阅查看器"
     plugin_desc = "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。"
-    plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/completed.png"
+    plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
     plugin_version = "1.4.0" # 致命修正版本
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
