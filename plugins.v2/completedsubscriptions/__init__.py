@@ -15,7 +15,7 @@ from app.helper.user import UserHelper
 from app.schemas import NotificationType
 from app.utils.timer import TimerUtils
 
-class CompletedSubscriptions(_PluginBase):
+class completedsubscriptions(_PluginBase):
     plugin_name = "已完成订阅查看器"
     plugin_desc = "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。"
     plugin_icon = "task-complete.png"

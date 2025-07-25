@@ -17,7 +17,7 @@
             "v1.0": "MoviePilot V2 版本站点数据统计插件"
         }
     },
-"CompletedSubscriptions": {
+"completedsubscriptions": {
     "name": "已完成订阅查看器",
     "description": "定时获取所有已完成的订阅，并清晰地展示订阅的媒体以及对应的用户。",
     "labels": "工具&日志",
