@@ -35,8 +35,8 @@ class CompletedSubscriptions(_PluginBase):
     # 插件元信息
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
-    plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.4.0" # 恢复详情页功能并增加完整注释
+    plugin_icon = "https://raw.githubusercontent.com/InfinityPPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
+    plugin_version = "4.5.0" # 新增用户独立天数设置
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -48,7 +48,8 @@ class CompletedSubscriptions(_PluginBase):
     _cron: str = None
     _onlyonce: bool = False
     _days_limit: int = None
-    _users_list: List[str] = []
+    _users_list_str: str = "" # 用于在UI上显示和保存原始输入
+    _users_config: Dict[str, int] = {} # 用于存储解析后的 "用户名: 天数" 映射
     _confirm_delete: bool = False
 
     # 定义需要用到的数据库操作类实例
@@ -73,13 +74,22 @@ class CompletedSubscriptions(_PluginBase):
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
             
-            # 加载天数限制，并确保是整数
+            # 加载全局天数限制
             days_str = config.get("days_limit")
             self._days_limit = int(days_str) if days_str and str(days_str).isdigit() else None
             
-            # 加载用户列表，处理成字符串列表
-            users_str = config.get("users_list", "")
-            self._users_list = [user.strip() for user in users_str.split('\n') if user.strip()]
+            # 加载用户列表原始字符串
+            self._users_list_str = config.get("users_list", "")
+            
+            # 解析用户列表字符串为 "用户名: 天数" 的字典
+            self._users_config = {}
+            for line in self._users_list_str.split('\n'):
+                if not line.strip(): continue
+                parts = [p.strip() for p in line.split(':')]
+                username = parts[0]
+                # 如果设置了独立天数且为数字，则使用；否则使用None，代表将使用全局天数
+                days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+                self._users_config[username] = days
 
             self._confirm_delete = config.get("confirm_delete", False)
         
@@ -104,46 +114,31 @@ class CompletedSubscriptions(_PluginBase):
         """
         向 MoviePilot 系统注册后台定时服务。
         """
-        # 如果插件未启用，则不注册任何服务
-        if not self.get_state(): 
-            return []
-        
-        # 如果用户自定义了 CRON 表达式，则使用它
+        if not self.get_state(): return []
         if self._cron:
             return [{"id": f"{self.__class__.__name__}_check", "name": "订阅历史清理", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
-        # 否则，使用默认的固定时间
         else:
             return [{"id": f"{self.__class__.__name__}_check_default", "name": "订阅历史清理 (默认)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": 3, "minute": 36}}]
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
-        """
-        注册远程命令，本插件未使用。
-        """
         return []
         
     def get_api(self) -> List[Dict[str, Any]]:
-        """
-        对外暴露 API 接口，本插件未使用。
-        """
         return []
 
     def get_page(self) -> List[dict]:
         """
         实现插件的详情页面，用于展示已删除的历史记录。
         """
-        # 从插件的持久化数据中读取已保存的删除历史
         deletion_history = self.get_data('deletion_history')
         if not deletion_history:
-            # 如果没有历史记录，显示提示信息
             return [
                 {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
             ]
         
-        # 将历史记录按删除时间降序排序
         deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         
-        # 动态构建卡片列表以展示每一条删除记录
         cards = []
         for item in deletion_history:
             cards.append({
@@ -160,8 +155,6 @@ class CompletedSubscriptions(_PluginBase):
                     ]}
                 ]
             })
-
-        # 返回最终的页面结构
         return [{'component': 'div', 'content': cards}]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -175,11 +168,11 @@ class CompletedSubscriptions(_PluginBase):
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'notify', 'label': '发送通知', 'hint': '任务执行后发送通知消息', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'days_limit', 'label': '天数限制', 'type': 'number', 'hint': '只处理超过指定天数的记录，留空则不执行', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'days_limit', 'label': '全局天数限制', 'type': 'number', 'hint': '只处理超过指定天数的记录，留空则不执行', 'persistent-hint': True}}]},
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VCronField', 'props': {'model': 'cron', 'label': '执行周期 (CRON)', 'hint': '留空则每日凌晨3点36分执行一次', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'users_list', 'label': '用户列表', 'rows': 4, 'hint': '每行一个用户名，只处理这些用户的记录，留空则不执行', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'users_list', 'label': '用户列表', 'rows': 4, 'hint': '每行一个用户，支持格式 "用户名" 或 "用户名:天数" 来覆盖全局天数限制。', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
@@ -187,24 +180,17 @@ class CompletedSubscriptions(_PluginBase):
                 ]},
                 {'component': 'VRow', 'content': [
                      {'component': 'VCol', 'props': {'cols': 12}, 'content': [
-                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“天数限制”和“用户列表”都填写时，才会根据条件过滤并输出或删除结果。'}}
+                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“全局天数限制”和“用户列表”都填写时，才会根据条件过滤并输出或删除结果。'}}
                      ]}
                 ]}
             ]}
         ], self.get_config_dict()
 
     def stop_service(self):
-        """
-        插件停止时调用的方法，本插件无需特殊清理。
-        """
         pass
 
     @db_query
     def _execute_db_operations(self, db: Session = None):
-        """
-        一个专门用于执行所有数据库操作的私有方法，以确保 db 会话被正确注入和使用。
-        它会返回一个包含完整信息的列表，用于后续的日志输出或删除记录。
-        """
         logger.info("进入 _execute_db_operations 方法...")
         try:
             # 1. 查询所有历史记录
@@ -214,14 +200,20 @@ class CompletedSubscriptions(_PluginBase):
             filtered_history = []
             current_time = datetime.now()
             for item in all_history:
-                if item.username in self._users_list:
-                    try:
-                        completed_time = datetime.strptime(item.date, '%Y-%m-%d %H:%M:%S')
-                        if (current_time - completed_time) > timedelta(days=self._days_limit):
-                            filtered_history.append(item)
-                    except (ValueError, TypeError):
-                        logger.warning(f"无法解析记录 '{item.name}' 的完成时间: {item.date}，跳过该条记录。")
-                        continue
+                # 检查用户名是否在配置的列表中
+                if item.username in self._users_config:
+                    # 获取该用户的独立天数限制，如果不存在，则使用全局天数限制
+                    user_days_limit = self._users_config.get(item.username) or self._days_limit
+                    
+                    # 如果最终的天数限制不为空，则进行时间判断
+                    if user_days_limit is not None:
+                        try:
+                            completed_time = datetime.strptime(item.date, '%Y-%m-%d %H:%M:%S')
+                            if (current_time - completed_time) > timedelta(days=user_days_limit):
+                                filtered_history.append(item)
+                        except (ValueError, TypeError):
+                            logger.warning(f"无法解析记录 '{item.name}' 的完成时间: {item.date}，跳过该条记录。")
+                            continue
 
             if not filtered_history:
                 return []
@@ -235,7 +227,6 @@ class CompletedSubscriptions(_PluginBase):
                     tmdbid=item.tmdbid,
                     season=item.season if item.type == MediaType.TV.value else None
                 )
-                
                 if downloads:
                     for download in downloads:
                         if not download.download_hash: continue
@@ -245,7 +236,6 @@ class CompletedSubscriptions(_PluginBase):
                                 associated_files.append(transfer.dest_fileitem.get('path'))
                             if transfer.src_fileitem:
                                 associated_files.append(transfer.src_fileitem.get('path'))
-                
                 results.append({
                     "history_item": item,
                     "files": associated_files
@@ -257,7 +247,6 @@ class CompletedSubscriptions(_PluginBase):
                 for result in results:
                     item = result["history_item"]
                     
-                    # 重新获取一次关联记录以执行删除
                     downloads = self.download_history_oper.get_last_by(
                         mtype=item.type, tmdbid=item.tmdbid,
                         season=item.season if item.type == MediaType.TV.value else None
@@ -274,11 +263,9 @@ class CompletedSubscriptions(_PluginBase):
                                     self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
                                     eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
                     
-                    # 删除订阅历史记录
                     SubscribeHistory.delete(db, item.id)
                     logger.info(f"已删除订阅历史记录: {item.name} (ID: {item.id})")
 
-                    # 将被删除的条目信息添加到列表中，用于更新详情页
                     deleted_items_for_page.append({
                         "title": item.name or "未知标题",
                         "user": item.username or "未知用户",
@@ -286,11 +273,9 @@ class CompletedSubscriptions(_PluginBase):
                         "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                     })
                 
-                # 更新详情页的删除历史
                 if deleted_items_for_page:
                     all_deleted_history = self.get_data('deletion_history') or []
                     all_deleted_history.extend(deleted_items_for_page)
-                    # 保留最近的200条记录
                     self.save_data('deletion_history', all_deleted_history[-200:])
 
             return results
@@ -300,27 +285,25 @@ class CompletedSubscriptions(_PluginBase):
             return []
 
     def run_check(self):
-        """
-        插件的核心执行逻辑。
-        """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         
         # 检查前置条件
-        if self._days_limit is None or not self._users_list:
-            logger.info(f"【{self.plugin_name}】：天数限制或用户列表未填写，任务中止。")
+        if self._days_limit is None and not any(self._users_config.values()):
+            logger.info(f"【{self.plugin_name}】：全局天数未设置，且没有任何用户设置独立天数，任务中止。")
             return
+        if not self._users_config:
+             logger.info(f"【{self.plugin_name}】：用户列表未填写，任务中止。")
+             return
             
-        logger.info(f"【{self.plugin_name}】：天数限制为 {self._days_limit} 天，用户列表为 {self._users_list}")
+        logger.info(f"【{self.plugin_name}】：全局天数限制为 {self._days_limit} 天，用户配置为 {self._users_config}")
         if self._confirm_delete:
             logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和历史记录！")
         else:
             logger.info(f"【{self.plugin_name}】：当前为预览模式，仅输出符合条件的媒体及其关联文件。")
 
         try:
-            # 将所有数据库操作集中到一个带有 @db_query 的方法中执行
             processed_results = self._execute_db_operations()
 
-            # 根据操作结果，生成总结信息和日志
             if not processed_results:
                 summary_text = "扫描完成，没有找到任何满足条件的记录。"
             else:
@@ -366,7 +349,7 @@ class CompletedSubscriptions(_PluginBase):
             "cron": self._cron, 
             "onlyonce": self._onlyonce, 
             "days_limit": self._days_limit, 
-            "users_list": "\n".join(self._users_list),
+            "users_list": self._users_list_str,
             "confirm_delete": self._confirm_delete
         }
     
