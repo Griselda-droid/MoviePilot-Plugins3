@@ -28,7 +28,7 @@ from app.db.transferhistory_oper import TransferHistoryOper
 from app.chain.storage import StorageChain
 from app.core.event import eventmanager
 from app.schemas import NotificationType, FileItem
-from app.schemas.types import EventType, MediaType
+from app.schemas.types import EventType
 
 
 class CompletedSubscriptions(_PluginBase):
@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.6.6" # 增加详情页分页显示
+    plugin_version = "4.6.2" # 修正数据库类型不匹配错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -159,49 +159,68 @@ class CompletedSubscriptions(_PluginBase):
         # 将历史记录按删除时间降序排序，最新的显示在最前面
         deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         
-        # 致命修正：实现分页逻辑，只取最近的200条用于显示
-        total_records = len(deletion_history)
-        display_records = deletion_history[:200]
-        
-        # 动态构建卡片列表以展示每一条删除记录
-        cards = []
-        for item in display_records:
-            cards.append({
-                'component': 'VCard', 'props': {'class': 'ma-2'}, 'content': [
-                    {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
-                        {'component': 'div', 'content': [
-                            {'component': 'VCardTitle', 'text': item.get("title", "未知标题")},
-                            {'component': 'VCardSubtitle', 'text': f"用户: {item.get('user', '未知')}"},
-                            {'component': 'VCardText', 'text': f"删除时间: {item.get('delete_time', '未知')}"}
-                        ]},
-                        {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
-                            {'component': 'VImg', 'props': {'src': item.get('image', ''), 'cover': True}}
-                        ]}
-                    ]}
-                ]
-            })
-        
-        # 构造包含分页提示和卡片列表的完整页面结构
+        # 使用 VDataIterator 组件来实现客户端分页
         return [{
-            'component': 'div',
-            'content': [
-                # 分页提示信息
+            'component': 'VDataIterator',
+            'props': {
+                'items': deletion_history,
+                'items-per-page': 200, # 每页显示200条
+                'item-key': 'delete_time' # 使用唯一的删除时间作为key
+            },
+            # 使用插槽(slots)来定义如何渲染数据和分页器
+            'slots': [
                 {
-                    'component': 'VAlert',
-                    'props': {
-                        'type': 'info',
-                        'variant': 'tonal',
-                        'class': 'mb-4',
-                        'text': f"正在显示最近 {len(display_records)} 条删除记录，共存储 {total_records} 条。"
-                    }
+                    'name': 'default',
+                    'content': [
+                        {
+                            'component': 'VContainer', 'props': {'fluid': True}, 'content': [
+                                {
+                                    'component': 'VRow',
+                                    'content': [
+                                        {
+                                            'component': 'VCol',
+                                            'props': {
+                                                'v-for': 'item in items', # VDataIterator 会提供一个名为 items 的变量，代表当前页的数据
+                                                'cols': 12, 'sm': 6, 'md': 4, 'lg': 3 # 响应式布局
+                                            },
+                                            'content': [
+                                                {
+                                                    'component': 'VCard', 'content': [
+                                                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                                                            {'component': 'div', 'content': [
+                                                                {'component': 'VCardTitle', 'text': '{{item.raw.title}}'},
+                                                                {'component': 'VCardSubtitle', 'text': '用户: {{item.raw.user}}'},
+                                                                {'component': 'VCardText', 'text': '删除于: {{item.raw.delete_time}}'}
+                                                            ]},
+                                                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
+                                                                {'component': 'VImg', 'props': {'src': '{{item.raw.image}}', 'cover': True}}
+                                                            ]}
+                                                        ]}
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
                 },
-                # 使用 grid 样式的 div 包裹所有卡片，实现响应式多列布局
                 {
-                    'component': 'div',
-                    'props': {
-                        'class': 'grid gap-3 grid-info-card',
-                    },
-                    'content': cards
+                    'name': 'footer',
+                    'content': [
+                        {
+                            'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
+                                {
+                                    'component': 'VPagination',
+                                    'props': {
+                                        'model': 'page', # VDataIterator 会提供 page, pageCount 等变量
+                                        'length': '{{pageCount}}'
+                                    }
+                                }
+                            ]
+                        }
+                    ]
                 }
             ]
         }]
@@ -280,10 +299,11 @@ class CompletedSubscriptions(_PluginBase):
             results = []
             for item in filtered_history:
                 associated_files = []
+                # 致命修正：使用字符串字面量 "tv" 进行比较，而不是枚举
                 downloads = self.download_history_oper.get_last_by(
                     mtype=item.type,
                     tmdbid=item.tmdbid,
-                    season=item.season if item.type == MediaType.TV.value else None
+                    season=item.season if item.type == "tv" else None
                 )
                 if downloads:
                     for download in downloads:
@@ -306,9 +326,10 @@ class CompletedSubscriptions(_PluginBase):
                     item = result["history_item"]
                     
                     # 重新获取一次关联记录以执行删除
+                    # 致命修正：使用字符串字面量 "tv" 进行比较
                     downloads = self.download_history_oper.get_last_by(
                         mtype=item.type, tmdbid=item.tmdbid,
-                        season=item.season if item.type == MediaType.TV.value else None
+                        season=item.season if item.type == "tv" else None
                     )
                     
                     if downloads:
@@ -338,7 +359,7 @@ class CompletedSubscriptions(_PluginBase):
                 if deleted_items_for_page:
                     all_deleted_history = self.get_data('deletion_history') or []
                     all_deleted_history.extend(deleted_items_for_page)
-                    # 致命修正：仅保留最近的1000条记录，防止数据文件过大
+                    # 仅保留最近的1000条记录，防止数据文件过大
                     self.save_data('deletion_history', all_deleted_history[-1000:])
 
             return results
