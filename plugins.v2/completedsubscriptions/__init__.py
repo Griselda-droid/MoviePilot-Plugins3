@@ -4,7 +4,7 @@
 *************************************************
 ***      订阅历史清理工具 (CompletedSubscriptions)     ***
 *************************************************
-- 功能：查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。
+- 功能：查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。
 - 作者：Gemini & 用户
 - 规范：严格参照系统数据模型和范例插件结构编写。
 """
@@ -38,9 +38,9 @@ class CompletedSubscriptions(_PluginBase):
     """
     # 插件元信息，用于在插件市场和系统内部展示
     plugin_name = "订阅历史清理工具"
-    plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
+    plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.7.0" # 完善详情页分页和显示
+    plugin_version = "4.7.1" # 修复详情页分页功能
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -148,79 +148,68 @@ class CompletedSubscriptions(_PluginBase):
         """
         实现插件的详情页面，用于展示已删除的历史记录。
         """
-        # 从插件的持久化数据中读取已保存的删除历史
+        # 从插件的持久化数据中读取已保存的删除 history
         deletion_history = self.get_data('deletion_history')
         if not deletion_history:
-            # 如果没有历史记录，显示提示信息
+            # 如果没有 history 记录，显示提示信息
             return [
                 {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
             ]
         
-        # 将历史记录按删除时间降序排序，最新的显示在最前面
+        # 将 history 记录按删除时间降序排序，最新的显示在最前面
         deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         
-        # 使用 VDataIterator 组件来实现客户端分页
-        return [{
-            'component': 'VDataIterator',
-            'props': {
-                'items': deletion_history,
-                'items-per-page': 200, # 每页显示200条
-                'item-key': 'delete_time', # 使用唯一的删除时间作为key，确保Vue高效渲染
-                'no-data-text': '暂无数据可显示' # 当没有数据时显示
-            },
-            # 使用插槽(slots)来定义如何渲染数据和分页器
-            'slots': [
-                {
-                    'name': 'default',
-                    'content': [
-                        {
-                            'component': 'VContainer', 'props': {'fluid': True}, 'content': [
-                                {
-                                    'component': 'VRow',
-                                    'content': [
-                                        {
-                                            'component': 'VCol',
-                                            'props': {
-                                                'v-for': 'item in items', # VDataIterator 会提供一个名为 items 的变量，代表当前页的数据
-                                                'cols': 12, 'sm': 6, 'md': 4, 'lg': 3 # 响应式布局：小屏幕1列，中屏幕2列，大屏幕3列
-                                            },
-                                            'content': [
-                                                {
-                                                    'component': 'VCard', 'content': [
-                                                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
-                                                            {'component': 'div', 'content': [
-                                                                # 访问item的属性，不再使用item.raw.xxx，而是item.xxx
-                                                                {'component': 'VCardTitle', 'text': '{{item.title}}'},
-                                                                {'component': 'VCardSubtitle', 'text': '用户: {{item.user}}'},
-                                                                {'component': 'VCardText', 'text': '删除于: {{item.delete_time}}'}
-                                                            ]},
-                                                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
-                                                                {'component': 'VImg', 'props': {'src': '{{item.image}}', 'cover': True}}
-                                                            ]}
-                                                        ]}
-                                                    ]
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
+        # 致命修正：实现手动客户端分页
+        items_per_page = 200
+        # 将所有 history 记录切割成多个子列表，每个子列表代表一页
+        pages = [deletion_history[i:i + items_per_page] for i in range(0, len(deletion_history), items_per_page)]
+        
+        # 构建 VWindowItem 列表，每个 item 是一页的内容
+        window_items = []
+        for i, page_items in enumerate(pages):
+            cards = []
+            for item in page_items:
+                cards.append({
+                    'component': 'VCard', 'content': [
+                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                            {'component': 'div', 'content': [
+                                {'component': 'VCardTitle', 'text': item.get("title", "未知标题")},
+                                {'component': 'VCardSubtitle', 'text': f"用户: {item.get('user', '未知')}"},
+                                {'component': 'VCardText', 'text': f"删除时间: {item.get('delete_time', '未知')}"}
+                            ]},
+                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
+                                {'component': 'VImg', 'props': {'src': item.get('image', ''), 'cover': True}}
+                            ]}
+                        ]}
                     ]
-                },
+                })
+            
+            # 每个 VWindowItem 包含一页的卡片网格
+            window_items.append({
+                'component': 'VWindowItem', 'props': {'value': i + 1}, 'content': [
+                    {
+                        'component': 'div',
+                        'props': {'class': 'grid gap-3 grid-info-card'},
+                        'content': cards
+                    }
+                ]
+            })
+
+        # 返回包含分页逻辑的最终页面结构
+        return [{
+            'component': 'div',
+            'content': [
+                # 使用 VWindow 来容纳所有页面，通过 v-model 控制显示哪一页
+                {'component': 'VWindow', 'props': {'model': '_page', 'class': 'mt-4'}, 'content': window_items},
+                # 使用 VPagination 来控制 VWindow 的 v-model，从而实现分页切换
                 {
-                    'name': 'footer', # 定义页脚插槽，用于放置分页组件
-                    'content': [
+                    'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
                         {
-                            'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
-                                {
-                                    'component': 'VPagination',
-                                    'props': {
-                                        'v-model': 'page', # 双向绑定当前页码
-                                        'length': '{{pageCount}}' # 总页数
-                                    }
-                                }
-                            ]
+                            'component': 'VPagination',
+                            'props': {
+                                'model': '_page',
+                                'length': len(pages) # 总页数
+                            }
                         }
                     ]
                 }
@@ -248,11 +237,11 @@ class CompletedSubscriptions(_PluginBase):
                 ]},
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件和订阅历史，请谨慎操作！', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件和订阅 history，请谨慎操作！', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
                      {'component': 'VCol', 'props': {'cols': 12}, 'content': [
-                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅历史。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅历史。'}}
+                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅 history。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅 history。'}}
                      ]}
                 ]}
             ]}
@@ -272,7 +261,7 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info("进入 _execute_db_operations 方法...")
         try:
-            # 1. 查询所有历史记录
+            # 1. 查询所有 history 记录
             all_history = db.query(SubscribeHistory).order_by(SubscribeHistory.date.desc()).all()
             
             # 2. 筛选满足天数和用户条件的记录
@@ -343,9 +332,9 @@ class CompletedSubscriptions(_PluginBase):
                                     self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
                                     eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
                     
-                    # 删除订阅历史记录
+                    # 删除订阅 history 记录
                     SubscribeHistory.delete(db, item.id)
-                    logger.info(f"已删除订阅历史记录: {item.name} (ID: {item.id})")
+                    logger.info(f"已删除订阅 history 记录: {item.name} (ID: {item.id})")
 
                     # 将被删除的条目信息添加到列表中，用于更新详情页
                     deleted_items_for_page.append({
@@ -355,7 +344,7 @@ class CompletedSubscriptions(_PluginBase):
                         "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                     })
                 
-                # 更新详情页的删除历史
+                # 更新详情页的删除 history
                 if deleted_items_for_page:
                     all_deleted_history = self.get_data('deletion_history') or []
                     all_deleted_history.extend(deleted_items_for_page)
@@ -384,7 +373,7 @@ class CompletedSubscriptions(_PluginBase):
             
         logger.info(f"【{self.plugin_name}】：全局天数限制为 {self._days_limit} 天，用户配置为 {self._users_config}")
         if self._confirm_delete:
-            logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和历史记录！")
+            logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和 history 记录！")
         else:
             logger.info(f"【{self.plugin_name}】：当前为预览模式，仅输出符合条件的媒体及其关联文件。")
 
@@ -417,7 +406,7 @@ class CompletedSubscriptions(_PluginBase):
                 logger.info("\n".join(output_lines))
 
                 if self._confirm_delete:
-                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅历史及其关联文件。"
+                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅 history 及其关联文件。"
                 else:
                     summary_text = f"预览完成，共找到 {len(processed_results)} 条满足条件的记录。"
             
