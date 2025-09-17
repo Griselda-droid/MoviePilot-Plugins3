@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅历史，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.6.2" # 修正数据库类型不匹配错误
+    plugin_version = "4.7.0" # 完善详情页分页和显示
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -165,7 +165,8 @@ class CompletedSubscriptions(_PluginBase):
             'props': {
                 'items': deletion_history,
                 'items-per-page': 200, # 每页显示200条
-                'item-key': 'delete_time' # 使用唯一的删除时间作为key
+                'item-key': 'delete_time', # 使用唯一的删除时间作为key，确保Vue高效渲染
+                'no-data-text': '暂无数据可显示' # 当没有数据时显示
             },
             # 使用插槽(slots)来定义如何渲染数据和分页器
             'slots': [
@@ -181,19 +182,20 @@ class CompletedSubscriptions(_PluginBase):
                                             'component': 'VCol',
                                             'props': {
                                                 'v-for': 'item in items', # VDataIterator 会提供一个名为 items 的变量，代表当前页的数据
-                                                'cols': 12, 'sm': 6, 'md': 4, 'lg': 3 # 响应式布局
+                                                'cols': 12, 'sm': 6, 'md': 4, 'lg': 3 # 响应式布局：小屏幕1列，中屏幕2列，大屏幕3列
                                             },
                                             'content': [
                                                 {
                                                     'component': 'VCard', 'content': [
                                                         {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
                                                             {'component': 'div', 'content': [
-                                                                {'component': 'VCardTitle', 'text': '{{item.raw.title}}'},
-                                                                {'component': 'VCardSubtitle', 'text': '用户: {{item.raw.user}}'},
-                                                                {'component': 'VCardText', 'text': '删除于: {{item.raw.delete_time}}'}
+                                                                # 访问item的属性，不再使用item.raw.xxx，而是item.xxx
+                                                                {'component': 'VCardTitle', 'text': '{{item.title}}'},
+                                                                {'component': 'VCardSubtitle', 'text': '用户: {{item.user}}'},
+                                                                {'component': 'VCardText', 'text': '删除于: {{item.delete_time}}'}
                                                             ]},
                                                             {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
-                                                                {'component': 'VImg', 'props': {'src': '{{item.raw.image}}', 'cover': True}}
+                                                                {'component': 'VImg', 'props': {'src': '{{item.image}}', 'cover': True}}
                                                             ]}
                                                         ]}
                                                     ]
@@ -207,15 +209,15 @@ class CompletedSubscriptions(_PluginBase):
                     ]
                 },
                 {
-                    'name': 'footer',
+                    'name': 'footer', # 定义页脚插槽，用于放置分页组件
                     'content': [
                         {
                             'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
                                 {
                                     'component': 'VPagination',
                                     'props': {
-                                        'model': 'page', # VDataIterator 会提供 page, pageCount 等变量
-                                        'length': '{{pageCount}}'
+                                        'v-model': 'page', # 双向绑定当前页码
+                                        'length': '{{pageCount}}' # 总页数
                                     }
                                 }
                             ]
@@ -299,11 +301,10 @@ class CompletedSubscriptions(_PluginBase):
             results = []
             for item in filtered_history:
                 associated_files = []
-                # 致命修正：使用字符串字面量 "tv" 进行比较，而不是枚举
                 downloads = self.download_history_oper.get_last_by(
                     mtype=item.type,
                     tmdbid=item.tmdbid,
-                    season=item.season if item.type == "tv" else None
+                    season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
                 )
                 if downloads:
                     for download in downloads:
@@ -326,10 +327,9 @@ class CompletedSubscriptions(_PluginBase):
                     item = result["history_item"]
                     
                     # 重新获取一次关联记录以执行删除
-                    # 致命修正：使用字符串字面量 "tv" 进行比较
                     downloads = self.download_history_oper.get_last_by(
                         mtype=item.type, tmdbid=item.tmdbid,
-                        season=item.season if item.type == "tv" else None
+                        season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
                     )
                     
                     if downloads:
@@ -374,7 +374,7 @@ class CompletedSubscriptions(_PluginBase):
         """
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         
-        # 检查前置条件
+        # 检查前置条件：全局天数限制和用户列表是否都有效
         if self._days_limit is None and not any(self._users_config.values()):
             logger.info(f"【{self.plugin_name}】：全局天数未设置，且没有任何用户设置独立天数，任务中止。")
             return
@@ -438,7 +438,7 @@ class CompletedSubscriptions(_PluginBase):
             "cron": self._cron, 
             "onlyonce": self._onlyonce, 
             "days_limit": self._days_limit, 
-            "users_list": self._users_list_str,
+            "users_list": self._users_list_str, # 保存原始字符串，以便UI正确显示
             "confirm_delete": self._confirm_delete
         }
     
