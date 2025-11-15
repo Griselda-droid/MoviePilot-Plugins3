@@ -435,7 +435,7 @@
         "name": "Gemini儿童电影推荐",
         "description": "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。",
         "labels": "订阅&AI",
-        "version": "1.4.1",
+        "version": "1.5.0",
         "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png",
         "author": "Gemini & 用户",
         "level": 1,
