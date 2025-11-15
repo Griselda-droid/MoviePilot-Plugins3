@@ -430,5 +430,19 @@
             "v4.5.0": "新增功能：用户列表现在支持 `用户名:天数` 格式，可以为单个用户设置独立的天数限制。",
             "v4.4.0": "功能完善：1. 恢复并实现了展示删除历史的详情页面。 2. 为代码增加了完整的中文注释。"
         }
+    },
+    "GeminiKidsMovies": {
+        "name": "Gemini儿童电影推荐",
+        "description": "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。",
+        "labels": "订阅&AI",
+        "version": "1.2.0",
+        "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png",
+        "author": "Gemini & 用户",
+        "level": 1,
+        "history": {
+            "v1.2.0": "功能优化：改进了默认的 AI Prompt，通过加入当前日期和更精确的时间范围，确保获取最新的电影推荐。",
+            "v1.1.0": "功能重构：移除了 `google-generativeai` 依赖，改用纯 HTTP 请求访问 Gemini API，实现零依赖。",
+            "v1.0.0": "插件首次创建，实现通过Gemini API获取电影并自动订阅的核心功能。"
+        }
     }
 }
