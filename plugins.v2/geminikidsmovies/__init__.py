@@ -28,6 +28,8 @@ from app.db.models.subscribehistory import SubscribeHistory
 from app.db import db_query
 from app.db.subscribe_oper import SubscribeOper
 from app.chain.subscribe import SubscribeChain
+# 致命修正：导入 DownloadChain 以检查媒体库
+from app.chain.download import DownloadChain
 from app.core.metainfo import MetaInfo
 from app.schemas import NotificationType
 from app.schemas.types import MediaType
@@ -41,7 +43,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.6.1" # 修正了详情页的致命语法错误
+    plugin_version = "1.7.0" # 优化检查逻辑：改为判断媒体库是否存在
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -119,17 +121,12 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_page(self) -> List[dict]:
-        """
-        实现插件的详情页面，用于展示已成功添加的电影历史记录。
-        """
         added_history = self.get_data('added_history')
         if not added_history:
             return [{'component': 'div', 'text': '暂无添加记录', 'props': {'class': 'text-center text-h6 pa-4'}}]
         
         added_history = sorted(added_history, key=lambda x: x.get('add_time'), reverse=True)
         
-        # 致命修正：重构了整个返回结构，确保语法正确
-        # 定义卡片模板
         card_template = {
             'component': 'VCard',
             'content': [
@@ -157,7 +154,6 @@ class GeminiKidsMovies(_PluginBase):
             ]
         }
         
-        # 定义整体页面结构
         page_structure = [
             {
                 'component': 'VDataIterator',
@@ -240,10 +236,6 @@ class GeminiKidsMovies(_PluginBase):
     def stop_service(self):
         pass
         
-    @db_query
-    def _is_in_history(self, db: Session, tmdbid: int) -> bool:
-        return db.query(SubscribeHistory).filter(SubscribeHistory.tmdbid == tmdbid).first() is not None
-
     def _call_gemini_api(self) -> str:
         logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
         logger.info(f"发送给 API 的完整 Prompt 内容: \n---PROMPT START---\n{self._final_prompt}\n---PROMPT END---")
@@ -258,7 +250,7 @@ class GeminiKidsMovies(_PluginBase):
             if not text:
                 logger.warning("Gemini API 返回了成功状态，但未能提取到文本内容。")
                 return ""
-            logger.info("成功获取并解析 Gemini API 的响应。")
+            logger.info(f"成功获取 Gemini API 的响应文本:\n---RESPONSE TEXT START---\n{text}\n---RESPONSE TEXT END---")
             return text
         except requests.exceptions.RequestException as e:
             logger.error(f"调用 Gemini API 时发生网络错误: {e}", exc_info=True)
@@ -304,14 +296,22 @@ class GeminiKidsMovies(_PluginBase):
                 mediainfo.title = title
                 mediainfo.year = year
 
+                # 检查1：是否已在活跃订阅中
                 if self.subscribe_oper.list_by_tmdbid(tmdbid=mediainfo.tmdb_id):
                     logger.info(f"'{title}' 已经存在于活跃订阅中，跳过。")
                     skipped_count += 1
                     continue
-                if self._is_in_history(tmdbid=mediainfo.tmdb_id):
-                    logger.info(f"'{title}' 已经存在于订阅历史中，跳过。")
+
+                # 致命修正：检查2：是否已存在于媒体库中
+                # 参照 BangumiColl 插件的实现
+                meta_for_check = MetaInfo(title)
+                meta_for_check.year = year
+                exist_flag, _ = DownloadChain().get_no_exists_info(meta=meta_for_check, mediainfo=mediainfo)
+                if exist_flag:
+                    logger.info(f"'{title}' 已经存在于媒体库中，跳过。")
                     skipped_count += 1
                     continue
+
                 logger.info(f"'{title}' 是新电影，准备添加订阅...")
                 sid, msg = self.subscribe_chain.add(
                     title=mediainfo.title,
