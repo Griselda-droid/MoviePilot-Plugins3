@@ -40,26 +40,31 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.2.0" # 优化Prompt以获取最新内容
+    plugin_version = "1.3.0" # 修正API错误并完善配置逻辑
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
     auth_level = 1
     
-    # ... (init_plugin, get_state, get_service, get_form 等方法保持不变，此处省略以保持简洁) ...
+    # 私有属性
     _enabled: bool = False
     _notify: bool = False
     _cron: str = None
     _onlyonce: bool = False
     _api_key: str = ""
+    _model_name: str = "" # 新增：模型名称
     _prompt: str = ""
     _save_path: str = ""
     _sites: List[int] = []
 
+    # 操作类实例
     subscribe_oper: SubscribeOper = None
     subscribe_chain: SubscribeChain = None
 
     def init_plugin(self, config: dict = None):
+        """
+        插件初始化
+        """
         self.subscribe_oper = SubscribeOper()
         self.subscribe_chain = SubscribeChain()
         if config:
@@ -68,10 +73,18 @@ class GeminiKidsMovies(_PluginBase):
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
             self._api_key = config.get("api_key", "")
-            self._prompt = config.get("prompt", self._get_default_prompt())
+            self._model_name = config.get("model_name", "gemini-1.5-flash") # 新增：加载模型名称
+            
+            # 致命修正：修正Prompt为空的逻辑
+            self._prompt = config.get("prompt", "")
+            if not self._prompt.strip():
+                self._prompt = self._get_default_prompt()
+
             self._save_path = config.get("save_path", "")
             self._sites = config.get("sites", [])
+        
         self.__update_config()
+
         if self._onlyonce:
             logger.info(f"【{self.plugin_name}】：配置了“立即运行一次”，任务即将开始...")
             self.run_check()
@@ -82,6 +95,7 @@ class GeminiKidsMovies(_PluginBase):
         return self._enabled
 
     def get_service(self) -> List[Dict[str, Any]]:
+        # ... (此方法保持不变) ...
         if not self.get_state(): return []
         if self._cron:
             return [{"id": f"{self.__class__.__name__}_check", "name": "Gemini电影推荐", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
@@ -99,25 +113,34 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        """
+        定义插件的配置界面。
+        """
         from app.db.site_oper import SiteOper
         sites_options = [{"title": site.name, "value": site.id} for site in SiteOper().list_order_by_pri()]
+
         return [
             {'component': 'VForm', 'content': [
+                # API密钥 和 模型名称
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'Gemini API 密钥', 'type': 'password', 'hint': '请输入您的Google AI Studio API密钥', 'persistent-hint': True}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VCronField', 'props': {'model': 'cron', 'label': '执行周期 (CRON)', 'hint': '留空则每周五晚8点执行', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'model_name', 'label': '模型名称', 'hint': '默认为 gemini-1.5-flash', 'persistent-hint': True}}]}
                 ]},
+                # Prompt 配置
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (提问)', 'rows': 5, 'hint': '请确保Prompt的返回结果包含“电影名 (年份)”格式', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (提问)', 'rows': 5, 'hint': '留空则使用默认设置。请确保返回结果包含“电影名 (年份)”格式', 'persistent-hint': True}}]}
                 ]},
+                # 订阅设置
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'save_path', 'label': '保存路径', 'hint': '新增订阅使用的保存路径，留空则使用默认', 'persistent-hint': True}}]},
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSelect', 'props': {'model': 'sites', 'label': '订阅站点', 'chips': True, 'multiple': True, 'clearable': True, 'items': sites_options, 'hint': '新增订阅时要搜索的站点', 'persistent-hint': True}}]}
                 ]},
+                # Cron 和 开关
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用插件'}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'notify', 'label': '发送通知'}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次'}}]}
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VCronField', 'props': {'model': 'cron', 'label': '执行周期 (CRON)', 'hint': '留空则每周五晚8点执行', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 2}, 'content': [{'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用'}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 2}, 'content': [{'component': 'VSwitch', 'props': {'model': 'notify', 'label': '通知'}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 2}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '运行一次'}}]}
                 ]},
             ]}
         ], self.get_config_dict()
@@ -130,15 +153,21 @@ class GeminiKidsMovies(_PluginBase):
         return db.query(SubscribeHistory).filter(SubscribeHistory.tmdbid == tmdbid).first() is not None
 
     def _call_gemini_api(self) -> str:
-        logger.info("正在通过 HTTP 请求调用 Gemini API...")
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self._api_key}"
+        """
+        使用纯 HTTP 请求调用 Gemini API。
+        """
+        logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
+        
+        # 致命修正：使用 self._model_name 动态构建 URL
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent?key={self._api_key}"
+        
         headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": self._prompt}]}]}
+
         try:
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
-            logger.debug(f"收到 Gemini API 的原始响应: {result}")
             text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
             if not text:
                 logger.warning("Gemini API 返回了成功状态，但未能提取到文本内容。")
@@ -146,7 +175,11 @@ class GeminiKidsMovies(_PluginBase):
             logger.info("成功获取并解析 Gemini API 的响应。")
             return text
         except requests.exceptions.RequestException as e:
-            logger.error(f"调用 Gemini API 时发生网络错误: {e}", exc_info=True)
+            # 增加对404错误的特别提示
+            if e.response is not None and e.response.status_code == 404:
+                logger.error(f"调用 Gemini API 时发生 404 Not Found 错误，请检查您的“模型名称”({self._model_name})是否正确且可用。", exc_info=True)
+            else:
+                logger.error(f"调用 Gemini API 时发生网络错误: {e}", exc_info=True)
             return ""
         except (KeyError, IndexError, json.JSONDecodeError) as e:
             logger.error(f"解析 Gemini API 响应时发生错误: {e}", exc_info=True)
@@ -223,6 +256,7 @@ class GeminiKidsMovies(_PluginBase):
             "cron": self._cron, 
             "onlyonce": self._onlyonce, 
             "api_key": self._api_key,
+            "model_name": self._model_name,
             "prompt": self._prompt,
             "save_path": self._save_path,
             "sites": self._sites
@@ -232,13 +266,7 @@ class GeminiKidsMovies(_PluginBase):
         self.update_config(self.get_config_dict())
         
     def _get_default_prompt(self):
-        """
-        致命修正：返回一个经过优化的、包含明确时间范围和当前日期的高质量默认Prompt。
-        """
-        # 获取当前日期，并格式化为 "YYYY年MM月DD日"
         today_str = datetime.now().strftime('%Y年%m月%d日')
-        
-        # 返回一个新的、更精确的Prompt
         return (f"今天是 {today_str}。"
                 "请推荐5部 **目前正在全球影院上映，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。"
                 "请严格按照'《电影名》(年份)'的格式返回，每部电影占一行。")
