@@ -41,7 +41,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.7.5"
+    plugin_version = "1.7.6"
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -133,89 +133,99 @@ class GeminiKidsMovies(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """
-        实现插件的详情页面，用于展示已删除的历史记录。
+        插件详情页：展示本插件**新增订阅**的历史记录（支持搜索、按年过滤、分页及卡片样式优化）。
+        注意：历史记录保存在 key `added_history` 中，每条记录应包含至少：title, year, image, add_time。
         """
-        # 从插件的持久化数据中读取已保存的删除 history
-        deletion_history = self.get_data('deletion_history')
-        if not deletion_history:
-            # 如果没有 history 记录，显示提示信息
-            return [
-                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
-            ]
-        
-        # 将 history 记录按删除时间降序排序，最新的显示在最前面
-        try:
-            deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
-        except Exception:
-            # 若排序出错则使用原始列表
-            deletion_history = deletion_history
-        
-        # 致命修正：实现手动客户端分页
-        items_per_page = 200
-        # 将所有 history 记录切割成多个子列表，每个子列表代表一页
-        pages = [deletion_history[i:i + items_per_page] for i in range(0, len(deletion_history), items_per_page)]
-        if not pages:
-            return [
-                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
-            ]
-        
-        # 构建 VWindowItem 列表，每个 item 是一页的内容
-        window_items = []
-        for i, page_items in enumerate(pages):
-            cards = []
-            for item in page_items:
-                # 保护性读取字段并提供默认值
-                title = item.get('title', '未知标题') if isinstance(item, dict) else str(item)
-                user = item.get('user', '未知') if isinstance(item, dict) else '未知'
-                delete_time = item.get('delete_time', '未知') if isinstance(item, dict) else '未知'
-                image = item.get('image', '') if isinstance(item, dict) else ''
+        # 读取已添加的订阅历史（由 run_check 保存）
+        added_history = self.get_data('added_history') or []
 
-                cards.append({
-                    'component': 'VCard', 'content': [
-                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
-                            {'component': 'div', 'content': [
-                                {'component': 'VCardTitle', 'text': title},
-                                {'component': 'VCardSubtitle', 'text': f"用户: {user}"},
-                                {'component': 'VCardText', 'text': f"删除时间: {delete_time}"}
-                            ]},
-                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
-                                {'component': 'VImg', 'props': {'src': image, 'cover': True}}
-                            ]}
-                        ]}
-                    ]
-                })
-            
-            # 每个 VWindowItem 包含一页的卡片网格
-            window_items.append({
-                'component': 'VWindowItem', 'props': {'value': i + 1}, 'content': [
+        if not added_history:
+            return [
+                {'component': 'div', 'text': '暂无添加记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            ]
+
+        # 保证按添加时间倒序显示
+        try:
+            added_history = sorted(added_history, key=lambda x: x.get('add_time', ''), reverse=True)
+        except Exception:
+            # 若排序失败则忽略
+            pass
+
+        # 前端每页条目数
+        items_per_page = 200
+
+        # 构建可选年份列表（用于前端筛选）
+        years = []
+        for it in added_history:
+            y = it.get('year') if isinstance(it, dict) else None
+            if y and y not in years:
+                years.append(y)
+        years = sorted(years, reverse=True)
+
+        # 返回页面结构：包含搜索框、年份下拉、VWindow + VPagination 展示卡片
+        return [
+            {
+                'component': 'div',
+                'content': [
+                    # 搜索栏与筛选
                     {
                         'component': 'div',
-                        'props': {'class': 'grid gap-3 grid-info-card'},
-                        'content': cards
+                        'props': {'class': 'd-flex flex-no-wrap pa-4'},
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': '_search',
+                                    'label': '搜索（按片名）',
+                                    'clearable': True,
+                                    'class': 'flex-grow-1 mr-4'
+                                }
+                            },
+                            {
+                                'component': 'VSelect',
+                                'props': {
+                                    'model': '_year',
+                                    'items': years,
+                                    'label': '筛选年份',
+                                    'clearable': True,
+                                    'class': 'mr-4',
+                                    'dense': True
+                                }
+                            },
+                            {
+                                'component': 'VBtn',
+                                'props': {'text': True, 'icon': True, 'class': 'mx-0'},
+                                'content': [
+                                    {'component': 'VIcon', 'text': 'mdi-magnify'}
+                                ]
+                            }
+                        ]
+                    },
+
+                    # VWindow: 每一页一个 VWindowItem
+                    {
+                        'component': 'VWindow',
+                        'props': {'model': '_page'},
+                        'content': self._build_added_history_pages(added_history, items_per_page)
+                    },
+
+                    # 分页器
+                    {
+                        'component': 'div',
+                        'props': {'class': 'd-flex justify-center pa-4'},
+                        'content': [
+                            {
+                                'component': 'VPagination',
+                                'props': {
+                                    'model': '_page',
+                                    'length': (len(added_history) - 1) // items_per_page + 1
+                                }
+                            }
+                        ]
                     }
                 ]
-            })
-
-        # 返回包含分页逻辑的最终页面结构
-        return [{
-            'component': 'div',
-            'content': [
-                # 使用 VWindow 来容纳所有页面，通过 v-model 控制显示哪一页
-                {'component': 'VWindow', 'props': {'model': '_page', 'class': 'mt-4'}, 'content': window_items},
-                # 使用 VPagination 来控制 VWindow 的 v-model，从而实现分页切换
-                {
-                    'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
-                        {
-                            'component': 'VPagination',
-                            'props': {
-                                'model': '_page',
-                                'length': len(pages) # 总页数
-                            }
-                        }
-                    ]
-                }
-            ]
-        }]
+            }
+        ]
 
 
 
