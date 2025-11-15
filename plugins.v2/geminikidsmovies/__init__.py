@@ -42,7 +42,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.7.1" # 修正识别逻辑，优先使用标题搜索
+    plugin_version = "1.7.2" # 修正硬编码的模型名称
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -54,7 +54,6 @@ class GeminiKidsMovies(_PluginBase):
     _cron: str = None
     _onlyonce: bool = False
     _api_key: str = ""
-    _model_name: str = ""
     _user_prompt: str = ""
     _final_prompt: str = ""
     _save_path: str = ""
@@ -77,7 +76,6 @@ class GeminiKidsMovies(_PluginBase):
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
             self._api_key = config.get("api_key", "")
-            self._model_name = config.get("model_name", "gemini-1.5-flash")
             
             self._user_prompt = config.get("prompt", "")
             
@@ -212,9 +210,9 @@ class GeminiKidsMovies(_PluginBase):
         sites_options = [{"title": site.name, "value": site.id} for site in SiteOper().list_order_by_pri()]
         return [
             {'component': 'VForm', 'content': [
+                # 致命修正：移除模型名称的输入框
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'Gemini API 密钥', 'type': 'password', 'hint': '请输入您的Google AI Studio API密钥', 'persistent-hint': True}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'model_name', 'label': '模型名称', 'hint': '默认为 gemini-1.5-flash', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'Gemini API 密钥', 'type': 'password', 'hint': '请输入您的Google AI Studio API密钥', 'persistent-hint': True}}]},
                 ]},
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (额外要求)', 'rows': 5, 'hint': '留空则使用内置的默认提问。如果填写，您的内容将作为额外要求附加到默认提问之后。', 'persistent-hint': True}}]}
@@ -236,9 +234,11 @@ class GeminiKidsMovies(_PluginBase):
         pass
         
     def _call_gemini_api(self) -> str:
-        logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
+        # 致命修正：根据您的指示，将模型固定为 gemini-2.5-flash
+        model_name = "gemini-2.5-flash"
+        logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {model_name}...")
         logger.info(f"发送给 API 的完整 Prompt 内容: \n---PROMPT START---\n{self._final_prompt}\n---PROMPT END---")
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent?key={self._api_key}"
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self._api_key}"
         headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": self._final_prompt}]}]}
         try:
@@ -285,7 +285,6 @@ class GeminiKidsMovies(_PluginBase):
             ai_tmdb_id = int(ai_tmdb_id)
             logger.info(f"--- 正在处理: {title} ({year}) [AI提供 TMDB ID: {ai_tmdb_id}] ---")
             try:
-                # 致命修正：优先使用标题和年份进行搜索识别
                 meta = MetaInfo(title)
                 meta.year = year
                 mediainfo = self.chain.recognize_media(meta=meta, mtype=MediaType.MOVIE)
@@ -295,17 +294,14 @@ class GeminiKidsMovies(_PluginBase):
                     skipped_count += 1
                     continue
 
-                # 辅助验证：检查系统识别的ID是否与AI提供的ID匹配
                 if mediainfo.tmdb_id != ai_tmdb_id:
                     logger.warning(f"系统识别的 TMDB ID '{mediainfo.tmdb_id}' 与 AI 提供的 '{ai_tmdb_id}' 不匹配，将使用系统识别结果。")
                 
-                # 检查1：是否已在活跃订阅中
                 if self.subscribe_oper.list_by_tmdbid(tmdbid=mediainfo.tmdb_id):
                     logger.info(f"'{mediainfo.title}' 已经存在于活跃订阅中，跳过。")
                     skipped_count += 1
                     continue
 
-                # 检查2：是否已存在于媒体库中
                 exist_flag, _ = DownloadChain().get_no_exists_info(meta=meta, mediainfo=mediainfo)
                 if exist_flag:
                     logger.info(f"'{mediainfo.title}' 已经存在于媒体库中，跳过。")
@@ -360,7 +356,6 @@ class GeminiKidsMovies(_PluginBase):
             "cron": self._cron, 
             "onlyonce": self._onlyonce, 
             "api_key": self._api_key,
-            "model_name": self._model_name,
             "prompt": self._user_prompt,
             "save_path": self._save_path,
             "sites": self._sites
