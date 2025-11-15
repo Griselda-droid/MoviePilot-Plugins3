@@ -40,7 +40,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.4.1" # 完善Prompt逻辑并增加日志
+    plugin_version = "1.5.0" # 修正正则并优化Prompt和日志
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -53,10 +53,11 @@ class GeminiKidsMovies(_PluginBase):
     _onlyonce: bool = False
     _api_key: str = ""
     _model_name: str = ""
-    _user_prompt: str = "" # 致命修正：用于存储用户在UI上输入的原始Prompt
-    _final_prompt: str = "" # 用于存储最终发送给API的完整Prompt
+    _user_prompt: str = ""
+    _final_prompt: str = ""
     _save_path: str = ""
     _sites: List[int] = []
+    _initialized: bool = False # 新增：用于防止重复打印加载日志的状态标志
 
     # 操作类实例
     subscribe_oper: SubscribeOper = None
@@ -76,28 +77,27 @@ class GeminiKidsMovies(_PluginBase):
             self._api_key = config.get("api_key", "")
             self._model_name = config.get("model_name", "gemini-1.5-flash")
             
-            # 致命修正：实现新的Prompt逻辑
-            # 1. 存储用户在UI上输入的原始、未加工的Prompt
             self._user_prompt = config.get("prompt", "")
             
-            # 2. 构建最终要发送给API的完整Prompt
+            # 构建最终Prompt
             default_prompt = self._get_default_prompt()
             if self._user_prompt and self._user_prompt.strip():
-                # 如果用户填写了，则将用户的要求附加到默认Prompt之后
-                self._final_prompt = default_prompt + "\n\n用户的额外要求：\n" + self._user_prompt
+                # 致命修正：修正日志输出重复的问题
+                self._final_prompt = f"{default_prompt}\n\n用户的额外要求：\n{self._user_prompt}"
             else:
-                # 如果用户留空，则直接使用默认Prompt
                 self._final_prompt = default_prompt
 
             self._save_path = config.get("save_path", "")
             self._sites = config.get("sites", [])
         
-        # 新增日志：输出加载的配置，方便调试
-        logger.info(f"【{self.plugin_name}】插件配置加载完成。")
-        logger.debug(f" - 启用状态: {self._enabled}")
-        logger.debug(f" - API 密钥: {'已设置' if self._api_key else '未设置'}")
-        logger.debug(f" - 模型名称: {self._model_name}")
-        logger.debug(f" - 用户输入Prompt: {self._user_prompt}")
+        # 致命修正：通过状态标志，确保加载日志只在第一次初始化时打印
+        if not self._initialized:
+            logger.info(f"【{self.plugin_name}】插件配置加载完成。")
+            logger.debug(f" - 启用状态: {self._enabled}")
+            logger.debug(f" - API 密钥: {'已设置' if self._api_key else '未设置'}")
+            logger.debug(f" - 模型名称: {self._model_name}")
+            logger.debug(f" - 用户输入Prompt: {self._user_prompt}")
+            self._initialized = True
         
         self.__update_config()
 
@@ -128,12 +128,8 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
-        """
-        定义插件的配置界面。
-        """
         from app.db.site_oper import SiteOper
         sites_options = [{"title": site.name, "value": site.id} for site in SiteOper().list_order_by_pri()]
-
         return [
             {'component': 'VForm', 'content': [
                 {'component': 'VRow', 'content': [
@@ -164,26 +160,16 @@ class GeminiKidsMovies(_PluginBase):
         return db.query(SubscribeHistory).filter(SubscribeHistory.tmdbid == tmdbid).first() is not None
 
     def _call_gemini_api(self) -> str:
-        """
-        使用纯 HTTP 请求调用 Gemini API。
-        """
         logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
-        
-        # 新增日志：输出最终发送给 API 的完整 Prompt 内容
         logger.info(f"发送给 API 的完整 Prompt 内容: \n---PROMPT START---\n{self._final_prompt}\n---PROMPT END---")
-        
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent?key={self._api_key}"
         headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": self._final_prompt}]}]}
-
         try:
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
-            
-            # 新增日志：输出 API 返回的原始 JSON
             logger.debug(f"收到 Gemini API 的原始响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
-            
             text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
             if not text:
                 logger.warning("Gemini API 返回了成功状态，但未能提取到文本内容。")
@@ -201,8 +187,13 @@ class GeminiKidsMovies(_PluginBase):
             return ""
 
     def _parse_movie_list(self, text: str) -> List[Tuple[str, str]]:
+        """
+        使用正则表达式解析AI返回的文本，提取电影名和年份。
+        """
         logger.info(f"开始解析 AI 响应文本...")
-        pattern = re.compile(r'《?(.+?)》?\s*\((\d{4})\)')
+        # 致命修正：优化正则表达式以处理 Markdown 列表符号 `*`
+        # 这个表达式会匹配 `* ` (可选) + `《` (可选) + 电影名 + `》` (可选) + ` (` + 年份 + `)`
+        pattern = re.compile(r'^\s*\*\s*《?(.+?)》?\s*\((\d{4})\)', re.MULTILINE)
         matches = pattern.findall(text)
         if not matches:
             logger.warning("从AI的响应中未能解析出任何 '电影 (年份)' 格式的条目。")
@@ -221,6 +212,8 @@ class GeminiKidsMovies(_PluginBase):
         added_count = 0
         skipped_count = 0
         for title, year in movies_to_subscribe:
+            # 清理标题前后可能存在的空格
+            title = title.strip()
             logger.info(f"--- 正在处理: {title} ({year}) ---")
             try:
                 meta = MetaInfo(title)
@@ -275,7 +268,7 @@ class GeminiKidsMovies(_PluginBase):
             "onlyonce": self._onlyonce, 
             "api_key": self._api_key,
             "model_name": self._model_name,
-            "prompt": self._user_prompt, # 致命修正：返回用户输入的原始Prompt，而不是处理后的
+            "prompt": self._user_prompt,
             "save_path": self._save_path,
             "sites": self._sites
         }
@@ -284,7 +277,13 @@ class GeminiKidsMovies(_PluginBase):
         self.update_config(self.get_config_dict())
         
     def _get_default_prompt(self):
+        """
+        致命修正：返回一个经过优化的、要求使用TMDB或豆瓣官方译名的高质量默认Prompt。
+        """
         today_str = datetime.now().strftime('%Y年%m月%d日')
-        return (f"今天是 {today_str}。"
-                "请推荐5部 **目前正在全球影院上映，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。"
-                "请严格按照'《电影名》(年份)'的格式返回，每部电影占一行。")
+        return (f"今天是 {today_str}。\n"
+                "请你扮演一位专业的影视推荐专家。\n"
+                "请推荐5部 **目前正在全球影院上映，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
+                "要求：\n"
+                "1. 电影名称必须是它在 TheMovieDB (TMDB) 或豆瓣电影上的**官方简体中文译名**。\n"
+                "2. 严格按照'《电影名》(年份)'的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
