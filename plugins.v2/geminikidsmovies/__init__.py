@@ -40,7 +40,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.5.0" # 修正正则并优化Prompt和日志
+    plugin_version = "1.5.1" # 修正正则表达式以兼容多种AI输出格式
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -57,7 +57,7 @@ class GeminiKidsMovies(_PluginBase):
     _final_prompt: str = ""
     _save_path: str = ""
     _sites: List[int] = []
-    _initialized: bool = False # 新增：用于防止重复打印加载日志的状态标志
+    _initialized: bool = False
 
     # 操作类实例
     subscribe_oper: SubscribeOper = None
@@ -79,10 +79,8 @@ class GeminiKidsMovies(_PluginBase):
             
             self._user_prompt = config.get("prompt", "")
             
-            # 构建最终Prompt
             default_prompt = self._get_default_prompt()
             if self._user_prompt and self._user_prompt.strip():
-                # 致命修正：修正日志输出重复的问题
                 self._final_prompt = f"{default_prompt}\n\n用户的额外要求：\n{self._user_prompt}"
             else:
                 self._final_prompt = default_prompt
@@ -90,7 +88,6 @@ class GeminiKidsMovies(_PluginBase):
             self._save_path = config.get("save_path", "")
             self._sites = config.get("sites", [])
         
-        # 致命修正：通过状态标志，确保加载日志只在第一次初始化时打印
         if not self._initialized:
             logger.info(f"【{self.plugin_name}】插件配置加载完成。")
             logger.debug(f" - 启用状态: {self._enabled}")
@@ -107,6 +104,7 @@ class GeminiKidsMovies(_PluginBase):
             self._onlyonce = False
             self.__update_config()
 
+    # ... (get_state, get_service, get_command, get_api, get_page, get_form, stop_service, _is_in_history, _call_gemini_api 等方法保持不变)
     def get_state(self) -> bool:
         return self._enabled
 
@@ -191,9 +189,9 @@ class GeminiKidsMovies(_PluginBase):
         使用正则表达式解析AI返回的文本，提取电影名和年份。
         """
         logger.info(f"开始解析 AI 响应文本...")
-        # 致命修正：优化正则表达式以处理 Markdown 列表符号 `*`
-        # 这个表达式会匹配 `* ` (可选) + `《` (可选) + 电影名 + `》` (可选) + ` (` + 年份 + `)`
-        pattern = re.compile(r'^\s*\*\s*《?(.+?)》?\s*\((\d{4})\)', re.MULTILINE)
+        # 致命修正：使用一个更宽容的正则表达式，它不再强制要求行首必须有 '*'。
+        # 它会匹配可选的行首空白、可选的'*'号、可选的书名号，然后捕获电影名和年份。
+        pattern = re.compile(r"^\s*(?:\*\s*)?《?(.+?)》?\s*\((\d{4})\)", re.MULTILINE)
         matches = pattern.findall(text)
         if not matches:
             logger.warning("从AI的响应中未能解析出任何 '电影 (年份)' 格式的条目。")
@@ -212,7 +210,6 @@ class GeminiKidsMovies(_PluginBase):
         added_count = 0
         skipped_count = 0
         for title, year in movies_to_subscribe:
-            # 清理标题前后可能存在的空格
             title = title.strip()
             logger.info(f"--- 正在处理: {title} ({year}) ---")
             try:
@@ -283,7 +280,7 @@ class GeminiKidsMovies(_PluginBase):
         today_str = datetime.now().strftime('%Y年%m月%d日')
         return (f"今天是 {today_str}。\n"
                 "请你扮演一位专业的影视推荐专家。\n"
-                "请推荐5部 **目前正在全球影院上映，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
+                "请推荐5部 **已经发行的，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
                 "要求：\n"
                 "1. 电影名称必须是它在 TheMovieDB (TMDB) 或豆瓣电影上的**官方简体中文译名**。\n"
                 "2. 严格按照'《电影名》(年份)'的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
