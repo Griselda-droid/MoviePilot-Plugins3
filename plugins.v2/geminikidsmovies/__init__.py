@@ -41,7 +41,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.6.0" # 致命修正：改用TMDB ID进行精确识别
+    plugin_version = "1.6.1" # 修正了详情页的致命语法错误
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -119,23 +119,98 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_page(self) -> List[dict]:
+        """
+        实现插件的详情页面，用于展示已成功添加的电影历史记录。
+        """
         added_history = self.get_data('added_history')
         if not added_history:
             return [{'component': 'div', 'text': '暂无添加记录', 'props': {'class': 'text-center text-h6 pa-4'}}]
+        
         added_history = sorted(added_history, key=lambda x: x.get('add_time'), reverse=True)
-        return [{'component': 'VDataIterator', 'props': {'items': added_history, 'items-per-page': 200, 'item-key': 'add_time'}, 'slots': [
-            {'name': 'default', 'content': [{'component': 'VContainer', 'props': {'fluid': True}, 'content': [{'component': 'VRow', 'content': [
-                {'component': 'VCol', 'props': {'v-for': 'item in items', 'cols': 12, 'sm': 6, 'md': 4, 'lg': 3}, 'content': [
-                    {'component': 'VCard', 'content': [{'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
-                        {'component': 'div', 'content': [
-                            {'component': 'VCardTitle', 'text': '{{item.title}}'},
-                            {'component': 'VCardSubtitle', 'text': '年份: {{item.year}}'},
-                            {'component': 'VCardText', 'text': '添加于: {{item.add_time}}'}
-                        ]},
-                        {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [{'component': 'VImg', 'props': {'src': '{{item.image}}', 'cover': True}}]}
-                    ]}]}]}]}]}]}]},
-            {'name': 'footer', 'content': [{'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [{'component': 'VPagination', 'props': {'v-model': 'page', 'length': '{{pageCount}}'}}]}]}
-        ]}]
+        
+        # 致命修正：重构了整个返回结构，确保语法正确
+        # 定义卡片模板
+        card_template = {
+            'component': 'VCard',
+            'content': [
+                {
+                    'component': 'div',
+                    'props': {'class': 'd-flex flex-no-wrap justify-space-between'},
+                    'content': [
+                        {
+                            'component': 'div',
+                            'content': [
+                                {'component': 'VCardTitle', 'text': '{{item.title}}'},
+                                {'component': 'VCardSubtitle', 'text': '年份: {{item.year}}'},
+                                {'component': 'VCardText', 'text': '添加于: {{item.add_time}}'}
+                            ]
+                        },
+                        {
+                            'component': 'VAvatar',
+                            'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'},
+                            'content': [
+                                {'component': 'VImg', 'props': {'src': '{{item.image}}', 'cover': True}}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # 定义整体页面结构
+        page_structure = [
+            {
+                'component': 'VDataIterator',
+                'props': {
+                    'items': added_history,
+                    'items-per-page': 200,
+                    'item-key': 'add_time'
+                },
+                'slots': [
+                    {
+                        'name': 'default',
+                        'content': [
+                            {
+                                'component': 'VContainer',
+                                'props': {'fluid': True},
+                                'content': [
+                                    {
+                                        'component': 'VRow',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'v-for': 'item in items',
+                                                    'cols': 12, 'sm': 6, 'md': 4, 'lg': 3
+                                                },
+                                                'content': [card_template]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'name': 'footer',
+                        'content': [
+                            {
+                                'component': 'div',
+                                'props': {'class': 'd-flex justify-center pa-4'},
+                                'content': [
+                                    {
+                                        'component': 'VPagination',
+                                        'props': {'v-model': 'page', 'length': '{{pageCount}}'}
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+        return page_structure
+
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         from app.db.site_oper import SiteOper
@@ -193,11 +268,7 @@ class GeminiKidsMovies(_PluginBase):
             return ""
 
     def _parse_movie_list(self, text: str) -> List[Tuple[str, str, str]]:
-        """
-        致命修正：更新正则表达式以捕获 TMDB ID。
-        """
         logger.info(f"开始解析 AI 响应文本...")
-        # 新的表达式会匹配 '《电影名》(年份) (TMDB ID: 12345)' 这样的格式
         pattern = re.compile(r"^\s*(?:\*\s*)?《?(.+?)》?\s*\((\d{4})\)\s*\(TMDB ID:\s*(\d+)\)", re.MULTILINE)
         matches = pattern.findall(text)
         if not matches:
@@ -218,13 +289,11 @@ class GeminiKidsMovies(_PluginBase):
         skipped_count = 0
         newly_added_items = []
 
-        # 致命修正：解包三个值：title, year, tmdb_id
         for title, year, tmdb_id in movies_to_subscribe:
             title = title.strip()
             tmdb_id = int(tmdb_id)
             logger.info(f"--- 正在处理: {title} ({year}) [TMDB ID: {tmdb_id}] ---")
             try:
-                # 致命修正：直接使用 tmdb_id 进行精确识别，不再依赖模糊的标题
                 mediainfo = self.chain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.MOVIE)
                 
                 if not mediainfo or not mediainfo.tmdb_id:
@@ -232,7 +301,6 @@ class GeminiKidsMovies(_PluginBase):
                     skipped_count += 1
                     continue
                 
-                # 更新从AI获取的title和year，以防TMDB信息不准确（例如对于未上映电影）
                 mediainfo.title = title
                 mediainfo.year = year
 
@@ -302,13 +370,10 @@ class GeminiKidsMovies(_PluginBase):
         self.update_config(self.get_config_dict())
         
     def _get_default_prompt(self):
-        """
-        致命修正：返回一个要求返回 TMDB ID 的高质量默认Prompt。
-        """
         today_str = datetime.now().strftime('%Y年%m月%d日')
         return (f"今天是 {today_str}。\n"
                 "请你扮演一位专业的影视推荐专家。\n"
                 "请推荐5部 **已经上线发行的高评分，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
                 "要求：\n"
-                "1. 电影名称必须是它在 TheMovieDB (TMDB) 上的**原始标题** (original_title)。\n"
+                "1. 电影名称必须是它在 TheMovieDB (TMDB) 上的原始标题 (original_title)。\n"
                 "2. 严格按照 '《电影名》(年份) (TMDB ID: xxxxx)' 的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
