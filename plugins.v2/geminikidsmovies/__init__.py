@@ -40,7 +40,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.5.1" # 修正正则表达式以兼容多种AI输出格式
+    plugin_version = "1.5.2" # 优化默认Prompt
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -104,7 +104,6 @@ class GeminiKidsMovies(_PluginBase):
             self._onlyonce = False
             self.__update_config()
 
-    # ... (get_state, get_service, get_command, get_api, get_page, get_form, stop_service, _is_in_history, _call_gemini_api 等方法保持不变)
     def get_state(self) -> bool:
         return self._enabled
 
@@ -185,12 +184,7 @@ class GeminiKidsMovies(_PluginBase):
             return ""
 
     def _parse_movie_list(self, text: str) -> List[Tuple[str, str]]:
-        """
-        使用正则表达式解析AI返回的文本，提取电影名和年份。
-        """
         logger.info(f"开始解析 AI 响应文本...")
-        # 致命修正：使用一个更宽容的正则表达式，它不再强制要求行首必须有 '*'。
-        # 它会匹配可选的行首空白、可选的'*'号、可选的书名号，然后捕获电影名和年份。
         pattern = re.compile(r"^\s*(?:\*\s*)?《?(.+?)》?\s*\((\d{4})\)", re.MULTILINE)
         matches = pattern.findall(text)
         if not matches:
@@ -275,12 +269,12 @@ class GeminiKidsMovies(_PluginBase):
         
     def _get_default_prompt(self):
         """
-        致命修正：返回一个经过优化的、要求使用TMDB或豆瓣官方译名的高质量默认Prompt。
+        致命修正：返回一个根据用户要求更新后的高质量默认Prompt。
         """
         today_str = datetime.now().strftime('%Y年%m月%d日')
         return (f"今天是 {today_str}。\n"
                 "请你扮演一位专业的影视推荐专家。\n"
-                "请推荐5部 **已经发行的，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
+                "请推荐5部 **已经上线发行的高评分，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
                 "要求：\n"
-                "1. 电影名称必须是它在 TheMovieDB (TMDB) 或豆瓣电影上的**官方简体中文译名**。\n"
+                "1. 电影名称必须是它在 TheMovieDB (TMDB) 或豆瓣电影上的原名。\n"
                 "2. 严格按照'《电影名》(年份)'的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
