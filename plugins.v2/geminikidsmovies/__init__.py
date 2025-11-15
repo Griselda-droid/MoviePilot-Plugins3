@@ -40,7 +40,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.3.0" # 修正API错误并完善配置逻辑
+    plugin_version = "1.4.0" # 修正add参数错误并优化Prompt逻辑
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -52,7 +52,7 @@ class GeminiKidsMovies(_PluginBase):
     _cron: str = None
     _onlyonce: bool = False
     _api_key: str = ""
-    _model_name: str = "" # 新增：模型名称
+    _model_name: str = ""
     _prompt: str = ""
     _save_path: str = ""
     _sites: List[int] = []
@@ -73,12 +73,20 @@ class GeminiKidsMovies(_PluginBase):
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
             self._api_key = config.get("api_key", "")
-            self._model_name = config.get("model_name", "gemini-1.5-flash") # 新增：加载模型名称
+            self._model_name = config.get("model_name", "gemini-1.5-flash")
             
-            # 致命修正：修正Prompt为空的逻辑
-            self._prompt = config.get("prompt", "")
-            if not self._prompt.strip():
-                self._prompt = self._get_default_prompt()
+            # 致命修正：实现新的Prompt逻辑
+            # 1. 先获取代码中内置的默认Prompt
+            default_prompt = self._get_default_prompt()
+            # 2. 获取用户在UI上填写的自定义Prompt
+            user_prompt = config.get("prompt", "")
+            # 3. 判断用户是否填写了内容
+            if user_prompt and user_prompt.strip():
+                # 如果用户填写了，则将用户的要求附加到默认Prompt之后
+                self._prompt = default_prompt + "\n\n用户的额外要求：\n" + user_prompt
+            else:
+                # 如果用户留空，则直接使用默认Prompt
+                self._prompt = default_prompt
 
             self._save_path = config.get("save_path", "")
             self._sites = config.get("sites", [])
@@ -95,7 +103,6 @@ class GeminiKidsMovies(_PluginBase):
         return self._enabled
 
     def get_service(self) -> List[Dict[str, Any]]:
-        # ... (此方法保持不变) ...
         if not self.get_state(): return []
         if self._cron:
             return [{"id": f"{self.__class__.__name__}_check", "name": "Gemini电影推荐", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
@@ -121,21 +128,18 @@ class GeminiKidsMovies(_PluginBase):
 
         return [
             {'component': 'VForm', 'content': [
-                # API密钥 和 模型名称
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'Gemini API 密钥', 'type': 'password', 'hint': '请输入您的Google AI Studio API密钥', 'persistent-hint': True}}]},
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'model_name', 'label': '模型名称', 'hint': '默认为 gemini-1.5-flash', 'persistent-hint': True}}]}
                 ]},
-                # Prompt 配置
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (提问)', 'rows': 5, 'hint': '留空则使用默认设置。请确保返回结果包含“电影名 (年份)”格式', 'persistent-hint': True}}]}
+                    # 致命修正：更新Prompt输入框的提示文本
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (提问)', 'rows': 5, 'hint': '留空则使用内置的默认提问。如果填写，您的内容将作为额外要求附加到默认提问之后。', 'persistent-hint': True}}]}
                 ]},
-                # 订阅设置
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'save_path', 'label': '保存路径', 'hint': '新增订阅使用的保存路径，留空则使用默认', 'persistent-hint': True}}]},
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSelect', 'props': {'model': 'sites', 'label': '订阅站点', 'chips': True, 'multiple': True, 'clearable': True, 'items': sites_options, 'hint': '新增订阅时要搜索的站点', 'persistent-hint': True}}]}
                 ]},
-                # Cron 和 开关
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VCronField', 'props': {'model': 'cron', 'label': '执行周期 (CRON)', 'hint': '留空则每周五晚8点执行', 'persistent-hint': True}}]},
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 2}, 'content': [{'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用'}}]},
@@ -153,17 +157,10 @@ class GeminiKidsMovies(_PluginBase):
         return db.query(SubscribeHistory).filter(SubscribeHistory.tmdbid == tmdbid).first() is not None
 
     def _call_gemini_api(self) -> str:
-        """
-        使用纯 HTTP 请求调用 Gemini API。
-        """
         logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
-        
-        # 致命修正：使用 self._model_name 动态构建 URL
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent?key={self._api_key}"
-        
         headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": self._prompt}]}]}
-
         try:
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
@@ -175,7 +172,6 @@ class GeminiKidsMovies(_PluginBase):
             logger.info("成功获取并解析 Gemini API 的响应。")
             return text
         except requests.exceptions.RequestException as e:
-            # 增加对404错误的特别提示
             if e.response is not None and e.response.status_code == 404:
                 logger.error(f"调用 Gemini API 时发生 404 Not Found 错误，请检查您的“模型名称”({self._model_name})是否正确且可用。", exc_info=True)
             else:
@@ -223,7 +219,11 @@ class GeminiKidsMovies(_PluginBase):
                     skipped_count += 1
                     continue
                 logger.info(f"'{title}' 是新电影，准备添加订阅...")
+
+                # 致命修正：在调用 add 方法时，补全 title 和 year 参数
                 sid, msg = self.subscribe_chain.add(
+                    title=mediainfo.title,
+                    year=mediainfo.year,
                     mtype=MediaType.MOVIE,
                     tmdbid=mediainfo.tmdb_id,
                     username=self.plugin_name,
