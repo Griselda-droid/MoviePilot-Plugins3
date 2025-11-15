@@ -435,13 +435,14 @@
         "name": "Gemini儿童电影推荐",
         "description": "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。",
         "labels": "订阅&AI",
-        "version": "1.5.0",
+        "version": "1.5.1",
         "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png",
         "author": "Gemini & 用户",
         "level": 1,
         "history": {
-            "v1.4.1": "功能修正：1. 修复了调用 `SubscribeChain.add` 时缺少参数的致命错误。 2. 优化了 AI Prompt 的处理逻辑，现在用户填写的内容会附加到默认Prompt之后，并且UI输入框不会被自动填充。 3. 增加了更详细的日志输出。",
-            "v1.3.0": "功能修正：1. 增加了模型名称的可配置项，解决了API 404错误。 2. 修正了当Prompt为空时插件无法运行的逻辑错误。",
+            "v1.5.1": "功能修正：1. 优化正则表达式，解决了因AI输出格式变化（无Markdown列表符号）导致的电影名识别错误。 2. 优化默认Prompt，要求AI返回TMDB或豆瓣官方译名。 3. 修正了Prompt拼接和日志重复的逻辑。",
+            "v1.4.1": "功能修正：1. 修复了调用 `SubscribeChain.add` 时缺少参数的错误。 2. 优化了 AI Prompt 的处理逻辑。",
+            "v1.3.0": "功能修正：1. 增加了模型名称的可配置项。 2. 修正了当Prompt为空时插件无法运行的逻辑错误。",
             "v1.2.0": "功能优化：改进了默认的 AI Prompt，以确保获取最新的电影推荐。",
             "v1.1.0": "功能重构：移除了 `google-generativai` 依赖，改用纯 HTTP 请求访问 Gemini API。"
         }
