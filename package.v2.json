@@ -435,16 +435,16 @@
         "name": "Gemini儿童电影推荐",
         "description": "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。",
         "labels": "订阅&AI",
-        "version": "1.7.0",
+        "version": "1.7.1",
         "icon": "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png",
         "author": "Gemini & 用户",
         "level": 1,
         "history": {
-            "v1.7.0": "功能优化：参照 `BangumiColl` 范例，将重复订阅的判断逻辑，从检查“订阅历史”改为检查“媒体库是否存在”，使判断更精准。",
-            "v1.6.2": "功能修正：1. 恢复了被意外删除的AI响应原文日志输出。 2. 将默认模型更新为 `gemini-2.5-flash`。",
+            "v1.7.1": "致命修正：根据用户反馈，彻底修正了识别逻辑。现在优先使用AI返回的标题和年份进行搜索，将TMDB ID作为辅助验证，解决了因AI提供错误ID导致的识别失败问题。",
+            "v1.7.0": "功能优化：参照 `BangumiColl` 范例，将重复订阅的判断逻辑，从检查“订阅历史”改为检查“媒体库是否存在”。",
+            "v1.6.2": "功能修正：1. 恢复了AI响应原文日志输出。 2. 将默认模型更新为 `gemini-2.5-flash`。",
             "v1.6.1": "致命修正：修复了 `get_page` 方法中由于复制粘贴导致的 `SyntaxError`。",
-            "v1.6.0": "致命修正：1. 优化Prompt，要求AI直接返回TMDB ID。 2. 改造插件逻辑，使用TMDB ID进行精确识别。",
-            "v1.5.1": "功能修正：1. 优化正则表达式。 2. 优化默认Prompt。 3. 修正了Prompt拼接和日志重复的逻辑。"
+            "v1.6.0": "致命修正：1. 优化Prompt，要求AI直接返回TMDB ID。 2. 改造插件逻辑，使用TMDB ID进行精确识别。"
         }
     }
 }
