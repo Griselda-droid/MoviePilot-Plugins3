@@ -12,6 +12,7 @@
 # 基础库导入
 import re
 import json
+import time
 from typing import Any, Dict, List, Tuple
 from datetime import datetime
 import requests
@@ -40,7 +41,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.5.2" # 优化默认Prompt
+    plugin_version = "1.6.0" # 致命修正：改用TMDB ID进行精确识别
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -90,10 +91,6 @@ class GeminiKidsMovies(_PluginBase):
         
         if not self._initialized:
             logger.info(f"【{self.plugin_name}】插件配置加载完成。")
-            logger.debug(f" - 启用状态: {self._enabled}")
-            logger.debug(f" - API 密钥: {'已设置' if self._api_key else '未设置'}")
-            logger.debug(f" - 模型名称: {self._model_name}")
-            logger.debug(f" - 用户输入Prompt: {self._user_prompt}")
             self._initialized = True
         
         self.__update_config()
@@ -122,7 +119,23 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_page(self) -> List[dict]:
-        return []
+        added_history = self.get_data('added_history')
+        if not added_history:
+            return [{'component': 'div', 'text': '暂无添加记录', 'props': {'class': 'text-center text-h6 pa-4'}}]
+        added_history = sorted(added_history, key=lambda x: x.get('add_time'), reverse=True)
+        return [{'component': 'VDataIterator', 'props': {'items': added_history, 'items-per-page': 200, 'item-key': 'add_time'}, 'slots': [
+            {'name': 'default', 'content': [{'component': 'VContainer', 'props': {'fluid': True}, 'content': [{'component': 'VRow', 'content': [
+                {'component': 'VCol', 'props': {'v-for': 'item in items', 'cols': 12, 'sm': 6, 'md': 4, 'lg': 3}, 'content': [
+                    {'component': 'VCard', 'content': [{'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                        {'component': 'div', 'content': [
+                            {'component': 'VCardTitle', 'text': '{{item.title}}'},
+                            {'component': 'VCardSubtitle', 'text': '年份: {{item.year}}'},
+                            {'component': 'VCardText', 'text': '添加于: {{item.add_time}}'}
+                        ]},
+                        {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [{'component': 'VImg', 'props': {'src': '{{item.image}}', 'cover': True}}]}
+                    ]}]}]}]}]}]}]},
+            {'name': 'footer', 'content': [{'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [{'component': 'VPagination', 'props': {'v-model': 'page', 'length': '{{pageCount}}'}}]}]}
+        ]}]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         from app.db.site_oper import SiteOper
@@ -166,7 +179,6 @@ class GeminiKidsMovies(_PluginBase):
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
-            logger.debug(f"收到 Gemini API 的原始响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
             text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
             if not text:
                 logger.warning("Gemini API 返回了成功状态，但未能提取到文本内容。")
@@ -174,21 +186,22 @@ class GeminiKidsMovies(_PluginBase):
             logger.info("成功获取并解析 Gemini API 的响应。")
             return text
         except requests.exceptions.RequestException as e:
-            if e.response is not None and e.response.status_code == 404:
-                logger.error(f"调用 Gemini API 时发生 404 Not Found 错误，请检查您的“模型名称”({self._model_name})是否正确且可用。", exc_info=True)
-            else:
-                logger.error(f"调用 Gemini API 时发生网络错误: {e}", exc_info=True)
+            logger.error(f"调用 Gemini API 时发生网络错误: {e}", exc_info=True)
             return ""
         except (KeyError, IndexError, json.JSONDecodeError) as e:
             logger.error(f"解析 Gemini API 响应时发生错误: {e}", exc_info=True)
             return ""
 
-    def _parse_movie_list(self, text: str) -> List[Tuple[str, str]]:
+    def _parse_movie_list(self, text: str) -> List[Tuple[str, str, str]]:
+        """
+        致命修正：更新正则表达式以捕获 TMDB ID。
+        """
         logger.info(f"开始解析 AI 响应文本...")
-        pattern = re.compile(r"^\s*(?:\*\s*)?《?(.+?)》?\s*\((\d{4})\)", re.MULTILINE)
+        # 新的表达式会匹配 '《电影名》(年份) (TMDB ID: 12345)' 这样的格式
+        pattern = re.compile(r"^\s*(?:\*\s*)?《?(.+?)》?\s*\((\d{4})\)\s*\(TMDB ID:\s*(\d+)\)", re.MULTILINE)
         matches = pattern.findall(text)
         if not matches:
-            logger.warning("从AI的响应中未能解析出任何 '电影 (年份)' 格式的条目。")
+            logger.warning("从AI的响应中未能解析出任何 '《电影名》(年份) (TMDB ID: xxxxx)' 格式的条目。")
         return matches
 
     def run_check(self):
@@ -200,20 +213,29 @@ class GeminiKidsMovies(_PluginBase):
         if not ai_response_text: return
         movies_to_subscribe = self._parse_movie_list(ai_response_text)
         if not movies_to_subscribe: return
-        logger.info(f"从AI响应中成功解析出 {len(movies_to_subscribe)} 部电影，开始处理...")
+        
         added_count = 0
         skipped_count = 0
-        for title, year in movies_to_subscribe:
+        newly_added_items = []
+
+        # 致命修正：解包三个值：title, year, tmdb_id
+        for title, year, tmdb_id in movies_to_subscribe:
             title = title.strip()
-            logger.info(f"--- 正在处理: {title} ({year}) ---")
+            tmdb_id = int(tmdb_id)
+            logger.info(f"--- 正在处理: {title} ({year}) [TMDB ID: {tmdb_id}] ---")
             try:
-                meta = MetaInfo(title)
-                meta.year = year
-                mediainfo = self.chain.recognize_media(meta=meta, mtype=MediaType.MOVIE)
+                # 致命修正：直接使用 tmdb_id 进行精确识别，不再依赖模糊的标题
+                mediainfo = self.chain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.MOVIE)
+                
                 if not mediainfo or not mediainfo.tmdb_id:
-                    logger.warning(f"无法识别媒体信息: {title} ({year})")
+                    logger.warning(f"无法通过 TMDB ID {tmdb_id} 识别媒体信息。")
                     skipped_count += 1
                     continue
+                
+                # 更新从AI获取的title和year，以防TMDB信息不准确（例如对于未上映电影）
+                mediainfo.title = title
+                mediainfo.year = year
+
                 if self.subscribe_oper.list_by_tmdbid(tmdbid=mediainfo.tmdb_id):
                     logger.info(f"'{title}' 已经存在于活跃订阅中，跳过。")
                     skipped_count += 1
@@ -236,13 +258,25 @@ class GeminiKidsMovies(_PluginBase):
                 if sid:
                     logger.info(f"成功添加订阅: '{title}' (ID: {sid})")
                     added_count += 1
+                    newly_added_items.append({
+                        "title": mediainfo.title,
+                        "year": mediainfo.year,
+                        "image": mediainfo.get_poster_image(),
+                        "add_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                    })
                 else:
                     logger.error(f"添加订阅 '{title}' 失败: {msg}")
                     skipped_count += 1
             except Exception as e:
                 logger.error(f"处理 '{title}' ({year}) 时发生未知错误: {e}", exc_info=True)
                 skipped_count += 1
-        summary_text = f"任务完成，共成功添加 {added_count} 部电影订阅，跳过 {skipped_count} 部（已存在或识别失败）。"
+        
+        if newly_added_items:
+            all_added_history = self.get_data('added_history') or []
+            all_added_history.extend(newly_added_items)
+            self.save_data('added_history', all_added_history[-1000:])
+
+        summary_text = f"任务完成，共成功添加 {added_count} 部电影订阅，跳过 {skipped_count} 部。"
         logger.info(f"【{self.plugin_name}】{summary_text}")
         if self._notify and added_count > 0:
             self.post_message(
@@ -269,12 +303,12 @@ class GeminiKidsMovies(_PluginBase):
         
     def _get_default_prompt(self):
         """
-        致命修正：返回一个根据用户要求更新后的高质量默认Prompt。
+        致命修正：返回一个要求返回 TMDB ID 的高质量默认Prompt。
         """
         today_str = datetime.now().strftime('%Y年%m月%d日')
         return (f"今天是 {today_str}。\n"
                 "请你扮演一位专业的影视推荐专家。\n"
                 "请推荐5部 **已经上线发行的高评分，或者即将在未来3个月内上映的**、适合全家观看的儿童动画电影。\n"
                 "要求：\n"
-                "1. 电影名称必须是它在 TheMovieDB (TMDB) 或豆瓣电影上的原名。\n"
-                "2. 严格按照'《电影名》(年份)'的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
+                "1. 电影名称必须是它在 TheMovieDB (TMDB) 上的**原始标题** (original_title)。\n"
+                "2. 严格按照 '《电影名》(年份) (TMDB ID: xxxxx)' 的格式返回，每部电影占一行，不要有任何多余的文字或列表符号。")
