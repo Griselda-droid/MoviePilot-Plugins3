@@ -28,7 +28,6 @@ from app.db.models.subscribehistory import SubscribeHistory
 from app.db import db_query
 from app.db.subscribe_oper import SubscribeOper
 from app.chain.subscribe import SubscribeChain
-# 致命修正：导入 DownloadChain 以检查媒体库
 from app.chain.download import DownloadChain
 from app.core.metainfo import MetaInfo
 from app.schemas import NotificationType
@@ -43,7 +42,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.7.0" # 优化检查逻辑：改为判断媒体库是否存在
+    plugin_version = "1.7.1" # 修正识别逻辑，优先使用标题搜索
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -281,38 +280,39 @@ class GeminiKidsMovies(_PluginBase):
         skipped_count = 0
         newly_added_items = []
 
-        for title, year, tmdb_id in movies_to_subscribe:
+        for title, year, ai_tmdb_id in movies_to_subscribe:
             title = title.strip()
-            tmdb_id = int(tmdb_id)
-            logger.info(f"--- 正在处理: {title} ({year}) [TMDB ID: {tmdb_id}] ---")
+            ai_tmdb_id = int(ai_tmdb_id)
+            logger.info(f"--- 正在处理: {title} ({year}) [AI提供 TMDB ID: {ai_tmdb_id}] ---")
             try:
-                mediainfo = self.chain.recognize_media(tmdbid=tmdb_id, mtype=MediaType.MOVIE)
+                # 致命修正：优先使用标题和年份进行搜索识别
+                meta = MetaInfo(title)
+                meta.year = year
+                mediainfo = self.chain.recognize_media(meta=meta, mtype=MediaType.MOVIE)
                 
                 if not mediainfo or not mediainfo.tmdb_id:
-                    logger.warning(f"无法通过 TMDB ID {tmdb_id} 识别媒体信息。")
+                    logger.warning(f"无法通过标题 '{title} ({year})' 识别媒体信息，跳过。")
                     skipped_count += 1
                     continue
-                
-                mediainfo.title = title
-                mediainfo.year = year
 
+                # 辅助验证：检查系统识别的ID是否与AI提供的ID匹配
+                if mediainfo.tmdb_id != ai_tmdb_id:
+                    logger.warning(f"系统识别的 TMDB ID '{mediainfo.tmdb_id}' 与 AI 提供的 '{ai_tmdb_id}' 不匹配，将使用系统识别结果。")
+                
                 # 检查1：是否已在活跃订阅中
                 if self.subscribe_oper.list_by_tmdbid(tmdbid=mediainfo.tmdb_id):
-                    logger.info(f"'{title}' 已经存在于活跃订阅中，跳过。")
+                    logger.info(f"'{mediainfo.title}' 已经存在于活跃订阅中，跳过。")
                     skipped_count += 1
                     continue
 
-                # 致命修正：检查2：是否已存在于媒体库中
-                # 参照 BangumiColl 插件的实现
-                meta_for_check = MetaInfo(title)
-                meta_for_check.year = year
-                exist_flag, _ = DownloadChain().get_no_exists_info(meta=meta_for_check, mediainfo=mediainfo)
+                # 检查2：是否已存在于媒体库中
+                exist_flag, _ = DownloadChain().get_no_exists_info(meta=meta, mediainfo=mediainfo)
                 if exist_flag:
-                    logger.info(f"'{title}' 已经存在于媒体库中，跳过。")
+                    logger.info(f"'{mediainfo.title}' 已经存在于媒体库中，跳过。")
                     skipped_count += 1
                     continue
 
-                logger.info(f"'{title}' 是新电影，准备添加订阅...")
+                logger.info(f"'{mediainfo.title}' 是新电影，准备添加订阅...")
                 sid, msg = self.subscribe_chain.add(
                     title=mediainfo.title,
                     year=mediainfo.year,
@@ -324,7 +324,7 @@ class GeminiKidsMovies(_PluginBase):
                     exist_ok=True
                 )
                 if sid:
-                    logger.info(f"成功添加订阅: '{title}' (ID: {sid})")
+                    logger.info(f"成功添加订阅: '{mediainfo.title}' (ID: {sid})")
                     added_count += 1
                     newly_added_items.append({
                         "title": mediainfo.title,
@@ -333,7 +333,7 @@ class GeminiKidsMovies(_PluginBase):
                         "add_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                     })
                 else:
-                    logger.error(f"添加订阅 '{title}' 失败: {msg}")
+                    logger.error(f"添加订阅 '{mediainfo.title}' 失败: {msg}")
                     skipped_count += 1
             except Exception as e:
                 logger.error(f"处理 '{title}' ({year}) 时发生未知错误: {e}", exc_info=True)
