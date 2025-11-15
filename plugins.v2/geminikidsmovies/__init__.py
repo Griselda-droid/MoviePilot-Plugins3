@@ -41,7 +41,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.7.3"
+    plugin_version = "1.7.5"
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -132,102 +132,91 @@ class GeminiKidsMovies(_PluginBase):
         return []
 
     def get_page(self) -> List[dict]:
-        # 为防止 get_data 抛异常，加上 try/except
+        """
+        实现插件的详情页面，用于展示已删除的历史记录。
+        """
+        # 从插件的持久化数据中读取已保存的删除 history
+        deletion_history = self.get_data('deletion_history')
+        if not deletion_history:
+            # 如果没有 history 记录，显示提示信息
+            return [
+                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            ]
+        
+        # 将 history 记录按删除时间降序排序，最新的显示在最前面
         try:
-            added_history = self.get_data('added_history')
-        except Exception as e:
-            logger.error(f"读取已添加历史时出错: {e}", exc_info=True)
-            added_history = None
-
-        if not added_history:
-            return [{'component': 'div', 'text': '暂无添加记录', 'props': {'class': 'text-center text-h6 pa-4'}}]
-
-        # 确保按照时间排序
-        try:
-            added_history = sorted(added_history, key=lambda x: x.get('add_time'), reverse=True)
+            deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         except Exception:
-            # 如果 add_time 不存在或排序失败，直接使用原数据
-            logger.warning("排序已添加记录时发生问题，使用原始顺序。")
+            # 若排序出错则使用原始列表
+            deletion_history = deletion_history
+        
+        # 致命修正：实现手动客户端分页
+        items_per_page = 200
+        # 将所有 history 记录切割成多个子列表，每个子列表代表一页
+        pages = [deletion_history[i:i + items_per_page] for i in range(0, len(deletion_history), items_per_page)]
+        if not pages:
+            return [
+                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            ]
+        
+        # 构建 VWindowItem 列表，每个 item 是一页的内容
+        window_items = []
+        for i, page_items in enumerate(pages):
+            cards = []
+            for item in page_items:
+                # 保护性读取字段并提供默认值
+                title = item.get('title', '未知标题') if isinstance(item, dict) else str(item)
+                user = item.get('user', '未知') if isinstance(item, dict) else '未知'
+                delete_time = item.get('delete_time', '未知') if isinstance(item, dict) else '未知'
+                image = item.get('image', '') if isinstance(item, dict) else ''
 
-        card_template = {
-            'component': 'VCard',
+                cards.append({
+                    'component': 'VCard', 'content': [
+                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                            {'component': 'div', 'content': [
+                                {'component': 'VCardTitle', 'text': title},
+                                {'component': 'VCardSubtitle', 'text': f"用户: {user}"},
+                                {'component': 'VCardText', 'text': f"删除时间: {delete_time}"}
+                            ]},
+                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
+                                {'component': 'VImg', 'props': {'src': image, 'cover': True}}
+                            ]}
+                        ]}
+                    ]
+                })
+            
+            # 每个 VWindowItem 包含一页的卡片网格
+            window_items.append({
+                'component': 'VWindowItem', 'props': {'value': i + 1}, 'content': [
+                    {
+                        'component': 'div',
+                        'props': {'class': 'grid gap-3 grid-info-card'},
+                        'content': cards
+                    }
+                ]
+            })
+
+        # 返回包含分页逻辑的最终页面结构
+        return [{
+            'component': 'div',
             'content': [
+                # 使用 VWindow 来容纳所有页面，通过 v-model 控制显示哪一页
+                {'component': 'VWindow', 'props': {'model': '_page', 'class': 'mt-4'}, 'content': window_items},
+                # 使用 VPagination 来控制 VWindow 的 v-model，从而实现分页切换
                 {
-                    'component': 'div',
-                    'props': {'class': 'd-flex flex-no-wrap justify-space-between'},
-                    'content': [
+                    'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
                         {
-                            'component': 'div',
-                            'content': [
-                                {'component': 'VCardTitle', 'text': "{{item.title}}"},
-                                {'component': 'VCardSubtitle', 'text': "年份: {{item.year}}"},
-                                {'component': 'VCardText', 'text': "添加于: {{item.add_time}}"}
-                            ]
-                        },
-                        {
-                            'component': 'VAvatar',
-                            'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'},
-                            'content': [
-                                {'component': 'VImg', 'props': {'src': "{{item.image}}", 'cover': True}}
-                            ]
+                            'component': 'VPagination',
+                            'props': {
+                                'model': '_page',
+                                'length': len(pages) # 总页数
+                            }
                         }
                     ]
                 }
             ]
-        }
+        }]
 
-        page_structure = [
-            {
-                'component': 'VDataIterator',
-                'props': {
-                    'items': added_history,
-                    'items-per-page': 200,
-                    'item-key': 'add_time'
-                },
-                'slots': [
-                    {
-                        'name': 'default',
-                        'content': [
-                            {
-                                'component': 'VContainer',
-                                'props': {'fluid': True},
-                                'content': [
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'v-for': 'item in items',
-                                                    'cols': 12, 'sm': 6, 'md': 4, 'lg': 3
-                                                },
-                                                'content': [card_template]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'name': 'footer',
-                        'content': [
-                            {
-                                'component': 'div',
-                                'props': {'class': 'd-flex justify-center pa-4'},
-                                'content': [
-                                    {
-                                        'component': 'VPagination',
-                                        'props': {'v-model': 'page', 'length': "{{pageCount}}"}
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
-        return page_structure
 
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
