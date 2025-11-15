@@ -40,7 +40,7 @@ class GeminiKidsMovies(_PluginBase):
     plugin_name = "Gemini儿童电影推荐"
     plugin_desc = "通过AI（如Gemini）获取近期适合儿童的电影，并自动添加订阅。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/gemini.png"
-    plugin_version = "1.4.0" # 修正add参数错误并优化Prompt逻辑
+    plugin_version = "1.4.1" # 完善Prompt逻辑并增加日志
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "gemini_kids_"
@@ -53,7 +53,8 @@ class GeminiKidsMovies(_PluginBase):
     _onlyonce: bool = False
     _api_key: str = ""
     _model_name: str = ""
-    _prompt: str = ""
+    _user_prompt: str = "" # 致命修正：用于存储用户在UI上输入的原始Prompt
+    _final_prompt: str = "" # 用于存储最终发送给API的完整Prompt
     _save_path: str = ""
     _sites: List[int] = []
 
@@ -76,20 +77,27 @@ class GeminiKidsMovies(_PluginBase):
             self._model_name = config.get("model_name", "gemini-1.5-flash")
             
             # 致命修正：实现新的Prompt逻辑
-            # 1. 先获取代码中内置的默认Prompt
+            # 1. 存储用户在UI上输入的原始、未加工的Prompt
+            self._user_prompt = config.get("prompt", "")
+            
+            # 2. 构建最终要发送给API的完整Prompt
             default_prompt = self._get_default_prompt()
-            # 2. 获取用户在UI上填写的自定义Prompt
-            user_prompt = config.get("prompt", "")
-            # 3. 判断用户是否填写了内容
-            if user_prompt and user_prompt.strip():
+            if self._user_prompt and self._user_prompt.strip():
                 # 如果用户填写了，则将用户的要求附加到默认Prompt之后
-                self._prompt = default_prompt + "\n\n用户的额外要求：\n" + user_prompt
+                self._final_prompt = default_prompt + "\n\n用户的额外要求：\n" + self._user_prompt
             else:
                 # 如果用户留空，则直接使用默认Prompt
-                self._prompt = default_prompt
+                self._final_prompt = default_prompt
 
             self._save_path = config.get("save_path", "")
             self._sites = config.get("sites", [])
+        
+        # 新增日志：输出加载的配置，方便调试
+        logger.info(f"【{self.plugin_name}】插件配置加载完成。")
+        logger.debug(f" - 启用状态: {self._enabled}")
+        logger.debug(f" - API 密钥: {'已设置' if self._api_key else '未设置'}")
+        logger.debug(f" - 模型名称: {self._model_name}")
+        logger.debug(f" - 用户输入Prompt: {self._user_prompt}")
         
         self.__update_config()
 
@@ -133,8 +141,7 @@ class GeminiKidsMovies(_PluginBase):
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'model_name', 'label': '模型名称', 'hint': '默认为 gemini-1.5-flash', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
-                    # 致命修正：更新Prompt输入框的提示文本
-                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (提问)', 'rows': 5, 'hint': '留空则使用内置的默认提问。如果填写，您的内容将作为额外要求附加到默认提问之后。', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'prompt', 'label': 'AI Prompt (额外要求)', 'rows': 5, 'hint': '留空则使用内置的默认提问。如果填写，您的内容将作为额外要求附加到默认提问之后。', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
                     {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'save_path', 'label': '保存路径', 'hint': '新增订阅使用的保存路径，留空则使用默认', 'persistent-hint': True}}]},
@@ -157,14 +164,26 @@ class GeminiKidsMovies(_PluginBase):
         return db.query(SubscribeHistory).filter(SubscribeHistory.tmdbid == tmdbid).first() is not None
 
     def _call_gemini_api(self) -> str:
+        """
+        使用纯 HTTP 请求调用 Gemini API。
+        """
         logger.info(f"正在通过 HTTP 请求调用 Gemini API，使用模型: {self._model_name}...")
+        
+        # 新增日志：输出最终发送给 API 的完整 Prompt 内容
+        logger.info(f"发送给 API 的完整 Prompt 内容: \n---PROMPT START---\n{self._final_prompt}\n---PROMPT END---")
+        
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_name}:generateContent?key={self._api_key}"
         headers = {'Content-Type': 'application/json'}
-        payload = {"contents": [{"parts": [{"text": self._prompt}]}]}
+        payload = {"contents": [{"parts": [{"text": self._final_prompt}]}]}
+
         try:
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
+            
+            # 新增日志：输出 API 返回的原始 JSON
+            logger.debug(f"收到 Gemini API 的原始响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
+            
             text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
             if not text:
                 logger.warning("Gemini API 返回了成功状态，但未能提取到文本内容。")
@@ -182,6 +201,7 @@ class GeminiKidsMovies(_PluginBase):
             return ""
 
     def _parse_movie_list(self, text: str) -> List[Tuple[str, str]]:
+        logger.info(f"开始解析 AI 响应文本...")
         pattern = re.compile(r'《?(.+?)》?\s*\((\d{4})\)')
         matches = pattern.findall(text)
         if not matches:
@@ -190,8 +210,8 @@ class GeminiKidsMovies(_PluginBase):
 
     def run_check(self):
         logger.info(f"开始执行【{self.plugin_name}】任务...")
-        if not self._api_key or not self._prompt:
-            logger.error(f"【{self.plugin_name}】：API密钥或Prompt未填写，任务中止。")
+        if not self._api_key or not self._final_prompt:
+            logger.error(f"【{self.plugin_name}】：API密钥或Prompt为空，任务中止。")
             return
         ai_response_text = self._call_gemini_api()
         if not ai_response_text: return
@@ -219,8 +239,6 @@ class GeminiKidsMovies(_PluginBase):
                     skipped_count += 1
                     continue
                 logger.info(f"'{title}' 是新电影，准备添加订阅...")
-
-                # 致命修正：在调用 add 方法时，补全 title 和 year 参数
                 sid, msg = self.subscribe_chain.add(
                     title=mediainfo.title,
                     year=mediainfo.year,
@@ -257,7 +275,7 @@ class GeminiKidsMovies(_PluginBase):
             "onlyonce": self._onlyonce, 
             "api_key": self._api_key,
             "model_name": self._model_name,
-            "prompt": self._prompt,
+            "prompt": self._user_prompt, # 致命修正：返回用户输入的原始Prompt，而不是处理后的
             "save_path": self._save_path,
             "sites": self._sites
         }
