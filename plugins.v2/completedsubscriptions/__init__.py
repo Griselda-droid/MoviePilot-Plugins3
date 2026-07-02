@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.2" # 修复到期记录无法正确删除关联文件和 history
+    plugin_version = "5.7.3" # 补全到期订阅关联整理记录的文件删除
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -65,7 +65,7 @@ class CompletedSubscriptions(_PluginBase):
     def __format_season(season):
         """
         SubscribeHistory.season 通常是数字，而 DownloadHistory.seasons 使用 S01 格式。
-        查询关联下载记录前需要统一格式，否则电视剧到期记录会匹配不到下载历史。
+        查询关联下载/整理记录前需要统一格式，否则电视剧到期记录会匹配不到历史。
         """
         if season is None or season == "":
             return None
@@ -92,6 +92,33 @@ class CompletedSubscriptions(_PluginBase):
             except ValueError:
                 continue
         return None
+
+    @staticmethod
+    def __append_unique(history_list, history_ids, history_item):
+        if not history_item or not getattr(history_item, "id", None):
+            return
+        if history_item.id in history_ids:
+            return
+        history_ids.add(history_item.id)
+        history_list.append(history_item)
+
+    @staticmethod
+    def __get_transfer_fileitems(transfer):
+        """
+        整理记录里可能同时有源文件、目标文件，以及多文件转移时的 files 清单。
+        都收集出来，避免只删到其中一集或一个链接文件。
+        """
+        fileitems = []
+        for fileitem in (transfer.dest_fileitem, transfer.src_fileitem):
+            if isinstance(fileitem, dict) and fileitem.get("path"):
+                fileitems.append(fileitem)
+
+        if isinstance(transfer.files, list):
+            for fileitem in transfer.files:
+                if isinstance(fileitem, dict) and fileitem.get("path"):
+                    fileitems.append(fileitem)
+
+        return fileitems
 
     def __get_related_downloads(self, item):
         """
@@ -132,6 +159,40 @@ class CompletedSubscriptions(_PluginBase):
                 ]
 
         return downloads or []
+
+    def __get_related_transfers(self, item, downloads=None):
+        """
+        查找关联整理记录。优先使用下载 hash，同时按媒体信息补查，覆盖历史记录 hash 缺失或不一致的情况。
+        """
+        season = self.__format_season(item.season) if item.type == "tv" else None
+        transfers = []
+        transfer_ids = set()
+
+        for download in downloads or []:
+            download_hash = getattr(download, "download_hash", None)
+            if not download_hash:
+                continue
+            for transfer in self.transfer_history_oper.list_by_hash(download_hash=download_hash) or []:
+                self.__append_unique(transfers, transfer_ids, transfer)
+
+        if item.tmdbid:
+            for transfer in self.transfer_history_oper.get_by(
+                mtype=item.type,
+                tmdbid=item.tmdbid,
+                season=season
+            ) or []:
+                self.__append_unique(transfers, transfer_ids, transfer)
+
+        if item.name and item.year:
+            for transfer in self.transfer_history_oper.get_by(
+                mtype=item.type,
+                title=item.name,
+                year=item.year,
+                season=season
+            ) or []:
+                self.__append_unique(transfers, transfer_ids, transfer)
+
+        return transfers
 
     def init_plugin(self, config: dict = None):
         """
@@ -366,17 +427,14 @@ class CompletedSubscriptions(_PluginBase):
             for item in filtered_history:
                 associated_files = []
                 downloads = self.__get_related_downloads(item)
-                if downloads:
-                    for download in downloads:
-                        if not download.download_hash: continue
-                        transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
-                        for transfer in transfers:
-                            if transfer.dest_fileitem:
-                                associated_files.append(transfer.dest_fileitem.get('path'))
-                            if transfer.src_fileitem:
-                                associated_files.append(transfer.src_fileitem.get('path'))
+                transfers = self.__get_related_transfers(item, downloads)
+                for transfer in transfers:
+                    for fileitem in self.__get_transfer_fileitems(transfer):
+                        associated_files.append(fileitem.get('path'))
                 results.append({
                     "history_item": item,
+                    "downloads": downloads,
+                    "transfers": transfers,
                     "files": associated_files
                 })
 
@@ -385,24 +443,25 @@ class CompletedSubscriptions(_PluginBase):
                 deleted_items_for_page = []
                 for result in results:
                     item = result["history_item"]
+                    downloads = result.get("downloads") or self.__get_related_downloads(item)
+                    transfers = result.get("transfers") or self.__get_related_transfers(item, downloads)
+                    deleted_file_paths = set()
                     
-                    # 重新获取一次关联记录以执行删除
-                    downloads = self.__get_related_downloads(item)
-                    
-                    if downloads:
-                        for download in downloads:
-                            if not download.download_hash: continue
-                            transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
-                            for transfer in transfers:
-                                if transfer.dest_fileitem:
-                                    self.storage_chain.delete_file(FileItem(**transfer.dest_fileitem))
-                                if transfer.src_fileitem:
-                                    self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
-                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
-                                self.transfer_history_oper.delete(transfer.id)
-                                logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
-                            self.download_history_oper.delete_history(download.id)
-                            logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
+                    for transfer in transfers:
+                        for fileitem in self.__get_transfer_fileitems(transfer):
+                            file_path = fileitem.get("path")
+                            if not file_path or file_path in deleted_file_paths:
+                                continue
+                            deleted_file_paths.add(file_path)
+                            self.storage_chain.delete_file(FileItem(**fileitem))
+                            if transfer.src_fileitem and file_path == transfer.src_fileitem.get("path"):
+                                eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                        self.transfer_history_oper.delete(transfer.id)
+                        logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
+
+                    for download in downloads:
+                        self.download_history_oper.delete_history(download.id)
+                        logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
                     
                     # 删除订阅 history 记录
                     SubscribeHistory.delete(db, item.id)
