@@ -2,26 +2,23 @@
 
 """
 *************************************************
-***   订阅历史清理工具 (CompletedSubscriptions v5.0) ***
+***      订阅历史清理工具 (CompletedSubscriptions)     ***
 *************************************************
-- 优化内容：
-  1. 查询结果缓存，避免重复DB访问
-  2. 删除流程拆分（文件/历史独立控制）
-  3. Transfer/Download/Subscribe 三层可选删除
-  4. 文件路径去重
-  5. 删除异常保护（不中断）
-  6. 删除统计（成功/失败）
-  7. datetime 兼容解析
-  8. 性能优化（减少重复 query）
+- 功能：查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。
+- 作者：Gemini & 用户
+- 规范：严格参照系统数据模型和范例插件结构编写。
 """
 
+# 基础库导入
 import time
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 from datetime import datetime, timedelta
 
+# 第三方库导入
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
+# MoviePilot 核心模块导入
 from app.log import logger
 from app.plugins import _PluginBase
 from app.db.models.subscribehistory import SubscribeHistory
@@ -35,290 +32,407 @@ from app.schemas.types import EventType
 
 
 class CompletedSubscriptions(_PluginBase):
-
+    """
+    插件的主类，继承自 _PluginBase。
+    实现了查询、过滤和删除订阅历史的核心功能。
+    """
+    # 插件元信息，用于在插件市场和系统内部展示
     plugin_name = "订阅历史清理工具"
-    plugin_desc = "清理订阅历史及关联文件"
+    plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.0.0"
+    plugin_version = "4.7.1" # 修复详情页分页功能
     plugin_author = "Gemini & 用户"
+    author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
     auth_level = 1
 
+    # 定义插件的私有属性，用于存储从配置文件中加载的状态
     _enabled: bool = False
     _notify: bool = False
     _cron: str = None
     _onlyonce: bool = False
     _days_limit: int = None
-    _users_list_str: str = ""
-    _users_config: Dict[str, int] = {}
+    _users_list_str: str = "" # 用于在UI上显示和保存用户输入的原始字符串
+    _users_config: Dict[str, int] = {} # 用于存储解析后的 "用户名: 天数" 映射关系
     _confirm_delete: bool = False
 
-    # 新增控制项
-    _delete_download_history: bool = True
-    _delete_transfer_history: bool = True
-    _delete_subscribe_history: bool = True
-    _delete_files: bool = True
-
+    # 定义需要用到的数据库操作类实例，在 init_plugin 中进行初始化
     download_history_oper: DownloadHistoryOper = None
     transfer_history_oper: TransferHistoryOper = None
     storage_chain: StorageChain = None
 
     def init_plugin(self, config: dict = None):
-
+        """
+        插件初始化方法。在 MoviePilot 启动或插件配置更新时被调用。
+        :param config: 从数据库加载的插件配置字典。
+        """
+        # 实例化所有需要用到的操作类
         self.download_history_oper = DownloadHistoryOper()
         self.transfer_history_oper = TransferHistoryOper()
         self.storage_chain = StorageChain()
 
+        # 如果存在配置，则从字典中加载各项配置
         if config:
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
-
-            self._days_limit = int(config.get("days_limit")) if config.get("days_limit") else None
-
+            
+            # 加载全局天数限制，并确保是整数
+            days_str = config.get("days_limit")
+            self._days_limit = int(days_str) if days_str and str(days_str).isdigit() else None
+            
+            # 加载用户列表原始字符串
             self._users_list_str = config.get("users_list", "")
-
+            
+            # 解析用户列表字符串为 "用户名: 天数" 的字典
             self._users_config = {}
-            for line in self._users_list_str.split("\n"):
-                if not line.strip():
-                    continue
-                parts = [x.strip() for x in line.split(":")]
-                self._users_config[parts[0]] = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            for line in self._users_list_str.split('\n'):
+                # 忽略空行
+                if not line.strip(): continue
+                # 按冒号分割
+                parts = [p.strip() for p in line.split(':')]
+                username = parts[0]
+                # 如果设置了独立天数且为数字，则使用；否则使用None，代表将使用全局天数
+                days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+                self._users_config[username] = days
 
             self._confirm_delete = config.get("confirm_delete", False)
-
+        
+        # 将加载后的配置（或默认配置）保存回数据库，确保配置持久化
         self.__update_config()
 
+        # 如果用户在UI上开启了“立即运行一次”开关
         if self._onlyonce:
+            logger.info(f"【{self.plugin_name}】：配置了“立即运行一次”，任务即将开始...")
             self.run_check()
+            # 执行后立即关闭开关，并保存配置，防止重复执行
             self._onlyonce = False
             self.__update_config()
 
-    def get_state(self):
+    def get_state(self) -> bool:
+        """
+        返回插件的启用状态。MoviePilot会根据此状态决定是否注册插件的服务。
+        """
         return self._enabled
 
-    def get_service(self):
-        if not self._enabled:
+    def get_service(self) -> List[Dict[str, Any]]:
+        """
+        向 MoviePilot 系统注册后台定时服务。
+        """
+        # 如果插件未启用，则不注册任何服务
+        if not self.get_state(): 
             return []
-
+        
+        # 如果用户自定义了 CRON 表达式，则使用它
         if self._cron:
-            return [{
-                "id": f"{self.__class__.__name__}_job",
-                "name": "订阅清理",
-                "trigger": CronTrigger.from_crontab(self._cron),
-                "func": self.run_check,
-                "kwargs": {}
-            }]
+            return [{"id": f"{self.__class__.__name__}_check", "name": "订阅历史清理", "trigger": CronTrigger.from_crontab(self._cron), "func": self.run_check, "kwargs": {}}]
+        # 否则，使用默认的固定时间
+        else:
+            return [{"id": f"{self.__class__.__name__}_check_default", "name": "订阅历史清理 (默认)", "trigger": "cron", "func": self.run_check, "kwargs": {"hour": 3, "minute": 36}}]
 
-        return [{
-            "id": f"{self.__class__.__name__}_default",
-            "name": "订阅清理(默认)",
-            "trigger": "cron",
-            "func": self.run_check,
-            "kwargs": {"hour": 3, "minute": 36}
-        }]
-
-    def get_command(self):
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        """
+        注册远程命令，本插件未使用。
+        """
+        return []
+        
+    def get_api(self) -> List[Dict[str, Any]]:
+        """
+        对外暴露 API 接口，本插件未使用。
+        """
         return []
 
-    def get_api(self):
-        return []
-
-    def get_page(self):
-        data = self.get_data("deletion_history") or []
-        if not data:
-            return [{'component': 'div', 'text': '暂无记录'}]
-
-        data = sorted(data, key=lambda x: x.get("delete_time", ""), reverse=True)
-
-        pages = [data[i:i + 200] for i in range(0, len(data), 200)]
-
+    def get_page(self) -> List[dict]:
+        """
+        实现插件的详情页面，用于展示已删除的历史记录。
+        """
+        # 从插件的持久化数据中读取已保存的删除 history
+        deletion_history = self.get_data('deletion_history')
+        if not deletion_history:
+            # 如果没有 history 记录，显示提示信息
+            return [
+                {'component': 'div', 'text': '暂无删除记录', 'props': {'class': 'text-center text-h6 pa-4'}}
+            ]
+        
+        # 将 history 记录按删除时间降序排序，最新的显示在最前面
+        deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
+        
+        # 致命修正：实现手动客户端分页
+        items_per_page = 200
+        # 将所有 history 记录切割成多个子列表，每个子列表代表一页
+        pages = [deletion_history[i:i + items_per_page] for i in range(0, len(deletion_history), items_per_page)]
+        
+        # 构建 VWindowItem 列表，每个 item 是一页的内容
         window_items = []
-        for i, page in enumerate(pages):
+        for i, page_items in enumerate(pages):
             cards = []
-            for item in page:
+            for item in page_items:
                 cards.append({
-                    'component': 'VCard',
-                    'content': [
-                        {'component': 'VCardTitle', 'text': item.get("title")},
-                        {'component': 'VCardSubtitle', 'text': item.get("user")},
-                        {'component': 'VCardText', 'text': item.get("delete_time")}
+                    'component': 'VCard', 'content': [
+                        {'component': 'div', 'props': {'class': 'd-flex flex-no-wrap justify-space-between'}, 'content': [
+                            {'component': 'div', 'content': [
+                                {'component': 'VCardTitle', 'text': item.get("title", "未知标题")},
+                                {'component': 'VCardSubtitle', 'text': f"用户: {item.get('user', '未知')}"},
+                                {'component': 'VCardText', 'text': f"删除时间: {item.get('delete_time', '未知')}"}
+                            ]},
+                            {'component': 'VAvatar', 'props': {'class': 'ma-3', 'size': '80', 'rounded': 'lg'}, 'content': [
+                                {'component': 'VImg', 'props': {'src': item.get('image', ''), 'cover': True}}
+                            ]}
+                        ]}
                     ]
                 })
-
+            
+            # 每个 VWindowItem 包含一页的卡片网格
             window_items.append({
-                'component': 'VWindowItem',
-                'props': {'value': i + 1},
-                'content': cards
+                'component': 'VWindowItem', 'props': {'value': i + 1}, 'content': [
+                    {
+                        'component': 'div',
+                        'props': {'class': 'grid gap-3 grid-info-card'},
+                        'content': cards
+                    }
+                ]
             })
 
+        # 返回包含分页逻辑的最终页面结构
         return [{
             'component': 'div',
             'content': [
-                {'component': 'VWindow', 'props': {'model': '_page'}, 'content': window_items},
-                {'component': 'VPagination', 'props': {'model': '_page', 'length': len(pages)}}
+                # 使用 VWindow 来容纳所有页面，通过 v-model 控制显示哪一页
+                {'component': 'VWindow', 'props': {'model': '_page', 'class': 'mt-4'}, 'content': window_items},
+                # 使用 VPagination 来控制 VWindow 的 v-model，从而实现分页切换
+                {
+                    'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
+                        {
+                            'component': 'VPagination',
+                            'props': {
+                                'model': '_page',
+                                'length': len(pages) # 总页数
+                            }
+                        }
+                    ]
+                }
             ]
         }]
 
-    def get_form(self):
 
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        """
+        定义并返回插件在前端的配置界面。
+        返回一个元组，第一部分是UI结构定义，第二部分是各项的默认值。
+        """
         return [
-            {'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用'}},
-            {'component': 'VSwitch', 'props': {'model': 'notify', 'label': '通知'}},
-            {'component': 'VTextField', 'props': {'model': 'days_limit', 'label': '天数限制'}},
-            {'component': 'VTextarea', 'props': {'model': 'users_list', 'label': '用户列表'}},
-            {'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '删除模式'}},
+            {'component': 'VForm', 'content': [
+                {'component': 'VRow', 'content': [
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用插件', 'hint': '开启或关闭插件功能', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'notify', 'label': '发送通知', 'hint': '任务执行后发送通知消息', 'persistent-hint': True}}]}
+                ]},
+                {'component': 'VRow', 'content': [
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VTextField', 'props': {'model': 'days_limit', 'label': '全局天数限制', 'type': 'number', 'hint': '只处理超过指定天数的记录，留空则不执行', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VCronField', 'props': {'model': 'cron', 'label': '执行周期 (CRON)', 'hint': '留空则每日凌晨3点36分执行一次', 'persistent-hint': True}}]}
+                ]},
+                {'component': 'VRow', 'content': [
+                    {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'users_list', 'label': '用户列表', 'rows': 4, 'hint': '每行一个用户，支持格式 "用户名" 或 "用户名:天数" 来覆盖全局天数限制。', 'persistent-hint': True}}]}
+                ]},
+                {'component': 'VRow', 'content': [
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件和订阅 history，请谨慎操作！', 'persistent-hint': True}}]}
+                ]},
+                {'component': 'VRow', 'content': [
+                     {'component': 'VCol', 'props': {'cols': 12}, 'content': [
+                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅 history。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅 history。'}}
+                     ]}
+                ]}
+            ]}
         ], self.get_config_dict()
 
     def stop_service(self):
+        """
+        插件停止时调用的方法，本插件无需特殊清理。
+        """
         pass
 
-    def _parse_time(self, t: str) -> Optional[datetime]:
-        if not t:
-            return None
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-            try:
-                return datetime.strptime(t, fmt)
-            except:
-                continue
-        return None
-
     @db_query
-    def _execute(self, db: Session = None):
+    def _execute_db_operations(self, db: Session = None):
+        """
+        一个专门用于执行所有数据库操作的私有方法，以确保 db 会话被正确注入和使用。
+        它会返回一个包含完整信息的列表，用于后续的日志输出或删除记录。
+        """
+        logger.info("进入 _execute_db_operations 方法...")
+        try:
+            # 1. 查询所有 history 记录
+            all_history = db.query(SubscribeHistory).order_by(SubscribeHistory.date.desc()).all()
+            
+            # 2. 筛选满足天数和用户条件的记录
+            filtered_history = []
+            current_time = datetime.now()
+            for item in all_history:
+                # 检查用户名是否在配置的列表中
+                if item.username in self._users_config:
+                    # 获取该用户的独立天数限制，如果不存在，则使用全局天数限制
+                    user_days_limit = self._users_config.get(item.username) or self._days_limit
+                    
+                    # 如果最终的天数限制不为空，则进行时间判断
+                    if user_days_limit is not None:
+                        try:
+                            completed_time = datetime.strptime(item.date, '%Y-%m-%d %H:%M:%S')
+                            if (current_time - completed_time) > timedelta(days=user_days_limit):
+                                filtered_history.append(item)
+                        except (ValueError, TypeError):
+                            logger.warning(f"无法解析记录 '{item.name}' 的完成时间: {item.date}，跳过该条记录。")
+                            continue
 
-        all_history = db.query(SubscribeHistory).order_by(SubscribeHistory.date.desc()).all()
+            if not filtered_history:
+                return []
+            
+            # 3. 为每一条满足条件的记录，查找其关联的文件
+            results = []
+            for item in filtered_history:
+                associated_files = []
+                downloads = self.download_history_oper.get_last_by(
+                    mtype=item.type,
+                    tmdbid=item.tmdbid,
+                    season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
+                )
+                if downloads:
+                    for download in downloads:
+                        if not download.download_hash: continue
+                        transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
+                        for transfer in transfers:
+                            if transfer.dest_fileitem:
+                                associated_files.append(transfer.dest_fileitem.get('path'))
+                            if transfer.src_fileitem:
+                                associated_files.append(transfer.src_fileitem.get('path'))
+                results.append({
+                    "history_item": item,
+                    "files": associated_files
+                })
 
-        now = datetime.now()
-        targets = []
+            # 4. 如果是删除模式，则执行删除
+            if self._confirm_delete:
+                deleted_items_for_page = []
+                for result in results:
+                    item = result["history_item"]
+                    
+                    # 重新获取一次关联记录以执行删除
+                    downloads = self.download_history_oper.get_last_by(
+                        mtype=item.type, tmdbid=item.tmdbid,
+                        season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
+                    )
+                    
+                    if downloads:
+                        for download in downloads:
+                            if not download.download_hash: continue
+                            transfers = self.transfer_history_oper.list_by_hash(download_hash=download.download_hash)
+                            for transfer in transfers:
+                                if transfer.dest_fileitem:
+                                    self.storage_chain.delete_file(FileItem(**transfer.dest_fileitem))
+                                if transfer.src_fileitem:
+                                    self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
+                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                    
+                    # 删除订阅 history 记录
+                    SubscribeHistory.delete(db, item.id)
+                    logger.info(f"已删除订阅 history 记录: {item.name} (ID: {item.id})")
 
-        for item in all_history:
-
-            if item.username not in self._users_config:
-                continue
-
-            limit = self._users_config.get(item.username) or self._days_limit
-            if not limit:
-                continue
-
-            dt = self._parse_time(item.date)
-            if not dt:
-                continue
-
-            if now - dt < timedelta(days=limit):
-                continue
-
-            targets.append(item)
-
-        results = []
-
-        for item in targets:
-
-            downloads = self.download_history_oper.get_last_by(
-                mtype=item.type,
-                tmdbid=item.tmdbid,
-                season=item.season if item.type == "tv" else None
-            ) or []
-
-            files = set()
-
-            transfers_cache = []
-
-            for d in downloads:
-                if not d.download_hash:
-                    continue
-
-                transfers = self.transfer_history_oper.list_by_hash(d.download_hash) or []
-                transfers_cache.extend(transfers)
-
-                for t in transfers:
-                    if t.dest_fileitem:
-                        files.add(t.dest_fileitem.get("path"))
-                    if t.src_fileitem:
-                        files.add(t.src_fileitem.get("path"))
-
-            results.append({
-                "item": item,
-                "downloads": downloads,
-                "transfers": transfers_cache,
-                "files": list(files)
-            })
-
-        deleted = []
-
-        if self._confirm_delete:
-
-            for r in results:
-
-                item = r["item"]
-
-                try:
-
-                    if self._delete_files:
-                        for f in r["files"]:
-                            try:
-                                self.storage_chain.delete_file(FileItem(path=f))
-                            except Exception as e:
-                                logger.error(f"删除文件失败: {f} {e}")
-
-                    if self._delete_transfer_history:
-                        for t in r["transfers"]:
-                            try:
-                                t.delete(db)
-                            except:
-                                pass
-
-                    if self._delete_download_history:
-                        for d in r["downloads"]:
-                            try:
-                                d.delete(db)
-                            except:
-                                pass
-
-                    if self._delete_subscribe_history:
-                        SubscribeHistory.delete(db, item.id)
-
-                    deleted.append({
-                        "title": item.name,
-                        "user": item.username,
-                        "delete_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # 将被删除的条目信息添加到列表中，用于更新详情页
+                    deleted_items_for_page.append({
+                        "title": item.name or "未知标题",
+                        "user": item.username or "未知用户",
+                        "image": item.poster or item.backdrop,
+                        "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                     })
+                
+                # 更新详情页的删除 history
+                if deleted_items_for_page:
+                    all_deleted_history = self.get_data('deletion_history') or []
+                    all_deleted_history.extend(deleted_items_for_page)
+                    # 仅保留最近的1000条记录，防止数据文件过大
+                    self.save_data('deletion_history', all_deleted_history[-1000:])
 
-                except Exception as e:
-                    logger.error(f"删除失败: {e}")
+            return results
 
-        return results, deleted
+        except Exception as e:
+            logger.error(f"【{self.plugin_name}】：在数据库操作中发生错误: {str(e)}", exc_info=True)
+            return []
 
     def run_check(self):
-
-        if not self._users_config:
-            logger.info("无用户配置，终止")
+        """
+        插件的核心执行逻辑。
+        """
+        logger.info(f"开始执行【{self.plugin_name}】任务...")
+        
+        # 检查前置条件：全局天数限制和用户列表是否都有效
+        if self._days_limit is None and not any(self._users_config.values()):
+            logger.info(f"【{self.plugin_name}】：全局天数未设置，且没有任何用户设置独立天数，任务中止。")
             return
-
-        results, deleted = self._execute()
-
-        logger.info(f"扫描完成：{len(results)}")
-
+        if not self._users_config:
+             logger.info(f"【{self.plugin_name}】：用户列表未填写，任务中止。")
+             return
+            
+        logger.info(f"【{self.plugin_name}】：全局天数限制为 {self._days_limit} 天，用户配置为 {self._users_config}")
         if self._confirm_delete:
-            self.save_data("deletion_history", (self.get_data("deletion_history") or []) + deleted)
+            logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和 history 记录！")
+        else:
+            logger.info(f"【{self.plugin_name}】：当前为预览模式，仅输出符合条件的媒体及其关联文件。")
 
-        if self._notify:
-            self.post_message(
-                mtype=NotificationType.Plugin,
-                title="订阅清理完成",
-                text=f"处理: {len(results)}"
-            )
+        try:
+            # 将所有数据库操作集中到一个带有 @db_query 的方法中执行
+            processed_results = self._execute_db_operations()
+
+            # 根据操作结果，生成总结信息和日志
+            if not processed_results:
+                summary_text = "扫描完成，没有找到任何满足条件的记录。"
+            else:
+                output_lines = ["", f"--- [ {self.plugin_name} - {'删除' if self._confirm_delete else '预览'}结果 ] ---"]
+                
+                for result in processed_results:
+                    item = result["history_item"]
+                    files = result["files"]
+                    output_lines.append(f"  - 媒体: {item.name or '未知标题'}")
+                    output_lines.append(f"  - 用户: {item.username or '未知用户'}")
+                    output_lines.append(f"  - 完成时间: {item.date or '未知时间'}")
+                    
+                    if files:
+                        output_lines.append("  - 关联文件:")
+                        for file_path in files:
+                            output_lines.append(f"    - {file_path}")
+                    else:
+                        output_lines.append("  - 关联文件: 未找到关联的下载或整理记录。")
+                    
+                    output_lines.append("  ---------------------------------")
+                
+                logger.info("\n".join(output_lines))
+
+                if self._confirm_delete:
+                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅 history 及其关联文件。"
+                else:
+                    summary_text = f"预览完成，共找到 {len(processed_results)} 条满足条件的记录。"
+            
+            logger.info(f"【{self.plugin_name}】任务执行完毕。{summary_text}")
+            if self._notify:
+                self.post_message(mtype=NotificationType.Plugin, title=f"【{self.plugin_name}】执行完成", text=summary_text)
+
+        except Exception as e:
+            logger.error(f"执行【{self.plugin_name}】插件时发生未知错误: {e}", exc_info=True)
 
     def get_config_dict(self):
-        return {
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "onlyonce": self._onlyonce,
-            "days_limit": self._days_limit,
-            "users_list": self._users_list_str,
+        """
+        将当前插件的所有配置项打包成一个字典，用于保存。
+        """
+        return { 
+            "enabled": self._enabled, 
+            "notify": self._notify, 
+            "cron": self._cron, 
+            "onlyonce": self._onlyonce, 
+            "days_limit": self._days_limit, 
+            "users_list": self._users_list_str, # 保存原始字符串，以便UI正确显示
             "confirm_delete": self._confirm_delete
         }
-
+    
     def __update_config(self):
+        """
+        一个私有辅助方法，用于将当前配置保存回数据库。
+        """
         self.update_config(self.get_config_dict())
