@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.7.1" # 修复详情页分页功能
+    plugin_version = "4.7.2" # 修复到期记录无法正确删除关联文件和 history
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -60,6 +60,78 @@ class CompletedSubscriptions(_PluginBase):
     download_history_oper: DownloadHistoryOper = None
     transfer_history_oper: TransferHistoryOper = None
     storage_chain: StorageChain = None
+
+    @staticmethod
+    def __format_season(season):
+        """
+        SubscribeHistory.season 通常是数字，而 DownloadHistory.seasons 使用 S01 格式。
+        查询关联下载记录前需要统一格式，否则电视剧到期记录会匹配不到下载历史。
+        """
+        if season is None or season == "":
+            return None
+        season_str = str(season).strip()
+        if not season_str:
+            return None
+        if season_str.upper().startswith("S"):
+            return season_str.upper()
+        return f"S{int(season_str):02d}" if season_str.isdigit() else season_str
+
+    @staticmethod
+    def __parse_completed_time(date_value):
+        """
+        兼容不同版本或数据库中可能出现的完成时间格式。
+        """
+        if isinstance(date_value, datetime):
+            return date_value
+        if not date_value:
+            return None
+        date_str = str(date_value).strip()
+        for date_format in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(date_str, date_format)
+            except ValueError:
+                continue
+        return None
+
+    def __get_related_downloads(self, item):
+        """
+        根据订阅历史查找关联下载记录，并为缺少 tmdbid 的记录提供兜底查询。
+        """
+        season = self.__format_season(item.season) if item.type == "tv" else None
+        downloads = []
+
+        if item.tmdbid:
+            downloads = self.download_history_oper.get_last_by(
+                mtype=item.type,
+                tmdbid=item.tmdbid,
+                season=season
+            )
+
+        if not downloads and item.name and item.year:
+            downloads = self.download_history_oper.get_last_by(
+                mtype=item.type,
+                title=item.name,
+                year=item.year,
+                season=season
+            )
+
+        if not downloads and (item.tmdbid or item.doubanid):
+            downloads = self.download_history_oper.get_by_mediaid(
+                tmdbid=item.tmdbid,
+                doubanid=item.doubanid
+            )
+            if item.type == "tv" and season:
+                downloads = [
+                    download for download in downloads
+                    if getattr(download, "seasons", None) == season
+                ]
+            elif item.type:
+                downloads = [
+                    download for download in downloads
+                    if getattr(download, "type", None) == item.type
+                ]
+
+        return downloads or []
 
     def init_plugin(self, config: dict = None):
         """
@@ -276,7 +348,10 @@ class CompletedSubscriptions(_PluginBase):
                     # 如果最终的天数限制不为空，则进行时间判断
                     if user_days_limit is not None:
                         try:
-                            completed_time = datetime.strptime(item.date, '%Y-%m-%d %H:%M:%S')
+                            completed_time = self.__parse_completed_time(item.date)
+                            if not completed_time:
+                                logger.warning(f"无法解析记录 '{item.name}' 的完成时间: {item.date}，跳过该条记录。")
+                                continue
                             if (current_time - completed_time) > timedelta(days=user_days_limit):
                                 filtered_history.append(item)
                         except (ValueError, TypeError):
@@ -290,11 +365,7 @@ class CompletedSubscriptions(_PluginBase):
             results = []
             for item in filtered_history:
                 associated_files = []
-                downloads = self.download_history_oper.get_last_by(
-                    mtype=item.type,
-                    tmdbid=item.tmdbid,
-                    season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
-                )
+                downloads = self.__get_related_downloads(item)
                 if downloads:
                     for download in downloads:
                         if not download.download_hash: continue
@@ -316,10 +387,7 @@ class CompletedSubscriptions(_PluginBase):
                     item = result["history_item"]
                     
                     # 重新获取一次关联记录以执行删除
-                    downloads = self.download_history_oper.get_last_by(
-                        mtype=item.type, tmdbid=item.tmdbid,
-                        season=item.season if item.type == "tv" else None # 使用字符串字面量 "tv" 进行比较
-                    )
+                    downloads = self.__get_related_downloads(item)
                     
                     if downloads:
                         for download in downloads:
@@ -331,6 +399,10 @@ class CompletedSubscriptions(_PluginBase):
                                 if transfer.src_fileitem:
                                     self.storage_chain.delete_file(FileItem(**transfer.src_fileitem))
                                     eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                                self.transfer_history_oper.delete(transfer.id)
+                                logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
+                            self.download_history_oper.delete_history(download.id)
+                            logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
                     
                     # 删除订阅 history 记录
                     SubscribeHistory.delete(db, item.id)
