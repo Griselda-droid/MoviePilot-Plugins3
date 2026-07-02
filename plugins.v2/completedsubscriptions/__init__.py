@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.log import logger
 from app.plugins import _PluginBase
 from app.db.models.subscribehistory import SubscribeHistory
+from app.db.models.transferhistory import TransferHistory
 from app.db import db_query
 from app.db.downloadhistory_oper import DownloadHistoryOper
 from app.db.transferhistory_oper import TransferHistoryOper
@@ -40,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.3" # 补全到期订阅关联整理记录的文件删除
+    plugin_version = "5.7.4" # 修复删除记录分页，并增加整理记录遗留清理
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -55,6 +56,7 @@ class CompletedSubscriptions(_PluginBase):
     _users_list_str: str = "" # 用于在UI上显示和保存用户输入的原始字符串
     _users_config: Dict[str, int] = {} # 用于存储解析后的 "用户名: 天数" 映射关系
     _confirm_delete: bool = False
+    _transfer_cleanup: bool = False
 
     # 定义需要用到的数据库操作类实例，在 init_plugin 中进行初始化
     download_history_oper: DownloadHistoryOper = None
@@ -101,6 +103,12 @@ class CompletedSubscriptions(_PluginBase):
             return
         history_ids.add(history_item.id)
         history_list.append(history_item)
+
+    @staticmethod
+    def __get_item_value(item, field, default=None):
+        if isinstance(item, dict):
+            return item.get(field, default)
+        return getattr(item, field, default)
 
     @staticmethod
     def __get_transfer_fileitems(transfer):
@@ -194,6 +202,59 @@ class CompletedSubscriptions(_PluginBase):
 
         return transfers
 
+    def __get_transfer_cleanup_results(self, db: Session, existing_transfer_ids):
+        """
+        通过插件自己的删除历史反查整理记录，用于清理旧版本没删干净的遗留文件。
+        只处理删除历史里出现过的标题，并限制为删除时间之前的整理记录，避免误伤新下载的同名媒体。
+        """
+        cleanup_results = []
+        deletion_history = self.get_data('deletion_history') or []
+        if not deletion_history:
+            return cleanup_results
+
+        for deleted_item in deletion_history:
+            title = deleted_item.get("title")
+            if not title or title == "未知标题":
+                continue
+
+            query = db.query(TransferHistory).filter(TransferHistory.title == title)
+            delete_time = self.__parse_completed_time(deleted_item.get("delete_time"))
+            if delete_time:
+                query = query.filter(TransferHistory.date <= deleted_item.get("delete_time"))
+
+            transfers = []
+            for transfer in query.all():
+                if transfer.id in existing_transfer_ids:
+                    continue
+                if not self.__get_transfer_fileitems(transfer):
+                    continue
+                existing_transfer_ids.add(transfer.id)
+                transfers.append(transfer)
+
+            if not transfers:
+                continue
+
+            associated_files = []
+            for transfer in transfers:
+                for fileitem in self.__get_transfer_fileitems(transfer):
+                    associated_files.append(fileitem.get("path"))
+
+            cleanup_results.append({
+                "history_item": {
+                    "name": title,
+                    "username": deleted_item.get("user", "删除历史"),
+                    "date": f"整理记录遗留清理：{deleted_item.get('delete_time', '未知时间')}",
+                    "poster": deleted_item.get("image"),
+                    "backdrop": None
+                },
+                "downloads": [],
+                "transfers": transfers,
+                "files": associated_files,
+                "transfer_cleanup": True
+            })
+
+        return cleanup_results
+
     def init_plugin(self, config: dict = None):
         """
         插件初始化方法。在 MoviePilot 启动或插件配置更新时被调用。
@@ -231,6 +292,7 @@ class CompletedSubscriptions(_PluginBase):
                 self._users_config[username] = days
 
             self._confirm_delete = config.get("confirm_delete", False)
+            self._transfer_cleanup = config.get("transfer_cleanup", False)
         
         # 将加载后的配置（或默认配置）保存回数据库，确保配置持久化
         self.__update_config()
@@ -292,14 +354,13 @@ class CompletedSubscriptions(_PluginBase):
         # 将 history 记录按删除时间降序排序，最新的显示在最前面
         deletion_history = sorted(deletion_history, key=lambda x: x.get('delete_time'), reverse=True)
         
-        # 致命修正：实现手动客户端分页
+        # 使用展开面板分批展示，避免依赖页面内部临时状态导致分页按钮无效
         items_per_page = 200
-        # 将所有 history 记录切割成多个子列表，每个子列表代表一页
         pages = [deletion_history[i:i + items_per_page] for i in range(0, len(deletion_history), items_per_page)]
-        
-        # 构建 VWindowItem 列表，每个 item 是一页的内容
-        window_items = []
+        panel_items = []
         for i, page_items in enumerate(pages):
+            start = i * items_per_page + 1
+            end = start + len(page_items) - 1
             cards = []
             for item in page_items:
                 cards.append({
@@ -316,37 +377,25 @@ class CompletedSubscriptions(_PluginBase):
                         ]}
                     ]
                 })
-            
-            # 每个 VWindowItem 包含一页的卡片网格
-            window_items.append({
-                'component': 'VWindowItem', 'props': {'value': i + 1}, 'content': [
-                    {
-                        'component': 'div',
-                        'props': {'class': 'grid gap-3 grid-info-card'},
-                        'content': cards
-                    }
+
+            panel_items.append({
+                'component': 'VExpansionPanel',
+                'content': [
+                    {'component': 'VExpansionPanelTitle', 'text': f"第 {i + 1} 页（{start}-{end} / 共 {len(deletion_history)} 条）"},
+                    {'component': 'VExpansionPanelText', 'content': [
+                        {
+                            'component': 'div',
+                            'props': {'class': 'grid gap-3 grid-info-card'},
+                            'content': cards
+                        }
+                    ]}
                 ]
             })
 
-        # 返回包含分页逻辑的最终页面结构
         return [{
-            'component': 'div',
-            'content': [
-                # 使用 VWindow 来容纳所有页面，通过 v-model 控制显示哪一页
-                {'component': 'VWindow', 'props': {'model': '_page', 'class': 'mt-4'}, 'content': window_items},
-                # 使用 VPagination 来控制 VWindow 的 v-model，从而实现分页切换
-                {
-                    'component': 'div', 'props': {'class': 'd-flex justify-center pa-4'}, 'content': [
-                        {
-                            'component': 'VPagination',
-                            'props': {
-                                'model': '_page',
-                                'length': len(pages) # 总页数
-                            }
-                        }
-                    ]
-                }
-            ]
+            'component': 'VExpansionPanels',
+            'props': {'variant': 'accordion', 'class': 'mt-4'},
+            'content': panel_items
         }]
 
 
@@ -369,12 +418,13 @@ class CompletedSubscriptions(_PluginBase):
                     {'component': 'VCol', 'props': {'cols': 12}, 'content': [{'component': 'VTextarea', 'props': {'model': 'users_list', 'label': '用户列表', 'rows': 4, 'hint': '每行一个用户，支持格式 "用户名" 或 "用户名:天数" 来覆盖全局天数限制。', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
-                    {'component': 'VCol', 'props': {'cols': 12, 'md': 6}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件和订阅 history，请谨慎操作！', 'persistent-hint': True}}]}
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'onlyonce', 'label': '保存后立即运行一次', 'hint': '该开关会在执行后自动关闭', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'confirm_delete', 'label': '确认删除', 'color': 'error', 'hint': '开启后将真实删除文件和订阅 history，请谨慎操作！', 'persistent-hint': True}}]},
+                    {'component': 'VCol', 'props': {'cols': 12, 'md': 4}, 'content': [{'component': 'VSwitch', 'props': {'model': 'transfer_cleanup', 'label': '整理记录遗留清理', 'color': 'warning', 'hint': '按插件删除历史反查整理记录，用于清理旧版本未删干净的文件，建议临时开启一次。', 'persistent-hint': True}}]}
                 ]},
                 {'component': 'VRow', 'content': [
                      {'component': 'VCol', 'props': {'cols': 12}, 'content': [
-                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅 history。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会正确执行。插件会判断完成订阅时间，当用户名以及设置天数合适时则删除文件、下载记录和订阅 history。'}}
+                         {'component': 'VAlert', 'props': {'type': 'info', 'variant': 'tonal', 'text': '此插件会扫描所有订阅 history。只有当“全局天数限制”或用户独立天数，以及“用户列表”都填写时，才会按订阅 history 执行。开启“整理记录遗留清理”后，会额外根据本插件已删除历史反查整理记录，用于清理旧版本未删干净的文件。'}}
                      ]}
                 ]}
             ]}
@@ -419,16 +469,15 @@ class CompletedSubscriptions(_PluginBase):
                             logger.warning(f"无法解析记录 '{item.name}' 的完成时间: {item.date}，跳过该条记录。")
                             continue
 
-            if not filtered_history:
-                return []
-            
             # 3. 为每一条满足条件的记录，查找其关联的文件
             results = []
+            existing_transfer_ids = set()
             for item in filtered_history:
                 associated_files = []
                 downloads = self.__get_related_downloads(item)
                 transfers = self.__get_related_transfers(item, downloads)
                 for transfer in transfers:
+                    existing_transfer_ids.add(transfer.id)
                     for fileitem in self.__get_transfer_fileitems(transfer):
                         associated_files.append(fileitem.get('path'))
                 results.append({
@@ -438,13 +487,19 @@ class CompletedSubscriptions(_PluginBase):
                     "files": associated_files
                 })
 
+            if self._transfer_cleanup:
+                results.extend(self.__get_transfer_cleanup_results(db, existing_transfer_ids))
+
+            if not results:
+                return []
+
             # 4. 如果是删除模式，则执行删除
             if self._confirm_delete:
                 deleted_items_for_page = []
                 for result in results:
                     item = result["history_item"]
-                    downloads = result.get("downloads") or self.__get_related_downloads(item)
-                    transfers = result.get("transfers") or self.__get_related_transfers(item, downloads)
+                    downloads = result.get("downloads") or []
+                    transfers = result.get("transfers") or []
                     deleted_file_paths = set()
                     
                     for transfer in transfers:
@@ -453,27 +508,42 @@ class CompletedSubscriptions(_PluginBase):
                             if not file_path or file_path in deleted_file_paths:
                                 continue
                             deleted_file_paths.add(file_path)
-                            self.storage_chain.delete_file(FileItem(**fileitem))
-                            if transfer.src_fileitem and file_path == transfer.src_fileitem.get("path"):
-                                eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                            try:
+                                self.storage_chain.delete_file(FileItem(**fileitem))
+                                if transfer.src_fileitem and file_path == transfer.src_fileitem.get("path"):
+                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                            except Exception as err:
+                                logger.warning(f"删除文件失败: {file_path}，错误: {err}")
                         self.transfer_history_oper.delete(transfer.id)
                         logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
 
                     for download in downloads:
                         self.download_history_oper.delete_history(download.id)
                         logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
-                    
-                    # 删除订阅 history 记录
-                    SubscribeHistory.delete(db, item.id)
-                    logger.info(f"已删除订阅 history 记录: {item.name} (ID: {item.id})")
 
-                    # 将被删除的条目信息添加到列表中，用于更新详情页
-                    deleted_items_for_page.append({
-                        "title": item.name or "未知标题",
-                        "user": item.username or "未知用户",
-                        "image": item.poster or item.backdrop,
-                        "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                    })
+                    item_name = self.__get_item_value(item, "name", "未知标题")
+                    item_user = self.__get_item_value(item, "username", "未知用户")
+                    item_image = self.__get_item_value(item, "poster") or self.__get_item_value(item, "backdrop")
+
+                    if not result.get("transfer_cleanup"):
+                        # 删除订阅 history 记录
+                        SubscribeHistory.delete(db, item.id)
+                        logger.info(f"已删除订阅 history 记录: {item_name} (ID: {item.id})")
+
+                        # 将被删除的条目信息添加到列表中，用于更新详情页
+                        deleted_items_for_page.append({
+                            "title": item_name,
+                            "user": item_user,
+                            "type": self.__get_item_value(item, "type"),
+                            "year": self.__get_item_value(item, "year"),
+                            "season": self.__get_item_value(item, "season"),
+                            "tmdbid": self.__get_item_value(item, "tmdbid"),
+                            "doubanid": self.__get_item_value(item, "doubanid"),
+                            "image": item_image,
+                            "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        })
+                    else:
+                        logger.info(f"已按整理记录清理遗留文件: {item_name}")
                 
                 # 更新详情页的删除 history
                 if deleted_items_for_page:
@@ -495,14 +565,14 @@ class CompletedSubscriptions(_PluginBase):
         logger.info(f"开始执行【{self.plugin_name}】任务...")
         
         # 检查前置条件：全局天数限制和用户列表是否都有效
-        if self._days_limit is None and not any(self._users_config.values()):
+        if not self._transfer_cleanup and self._days_limit is None and not any(self._users_config.values()):
             logger.info(f"【{self.plugin_name}】：全局天数未设置，且没有任何用户设置独立天数，任务中止。")
             return
-        if not self._users_config:
+        if not self._transfer_cleanup and not self._users_config:
              logger.info(f"【{self.plugin_name}】：用户列表未填写，任务中止。")
              return
             
-        logger.info(f"【{self.plugin_name}】：全局天数限制为 {self._days_limit} 天，用户配置为 {self._users_config}")
+        logger.info(f"【{self.plugin_name}】：全局天数限制为 {self._days_limit} 天，用户配置为 {self._users_config}，整理记录遗留清理为 {self._transfer_cleanup}")
         if self._confirm_delete:
             logger.warning(f"【{self.plugin_name}】：已开启“确认删除”模式，将会真实删除文件和 history 记录！")
         else:
@@ -521,9 +591,11 @@ class CompletedSubscriptions(_PluginBase):
                 for result in processed_results:
                     item = result["history_item"]
                     files = result["files"]
-                    output_lines.append(f"  - 媒体: {item.name or '未知标题'}")
-                    output_lines.append(f"  - 用户: {item.username or '未知用户'}")
-                    output_lines.append(f"  - 完成时间: {item.date or '未知时间'}")
+                    output_lines.append(f"  - 媒体: {self.__get_item_value(item, 'name', '未知标题')}")
+                    output_lines.append(f"  - 用户: {self.__get_item_value(item, 'username', '未知用户')}")
+                    output_lines.append(f"  - 完成时间: {self.__get_item_value(item, 'date', '未知时间')}")
+                    if result.get("transfer_cleanup"):
+                        output_lines.append("  - 类型: 整理记录遗留清理")
                     
                     if files:
                         output_lines.append("  - 关联文件:")
@@ -537,7 +609,7 @@ class CompletedSubscriptions(_PluginBase):
                 logger.info("\n".join(output_lines))
 
                 if self._confirm_delete:
-                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅 history 及其关联文件。"
+                    summary_text = f"扫描完成，共处理了 {len(processed_results)} 条订阅 history / 整理记录遗留项及其关联文件。"
                 else:
                     summary_text = f"预览完成，共找到 {len(processed_results)} 条满足条件的记录。"
             
@@ -559,7 +631,8 @@ class CompletedSubscriptions(_PluginBase):
             "onlyonce": self._onlyonce, 
             "days_limit": self._days_limit, 
             "users_list": self._users_list_str, # 保存原始字符串，以便UI正确显示
-            "confirm_delete": self._confirm_delete
+            "confirm_delete": self._confirm_delete,
+            "transfer_cleanup": self._transfer_cleanup
         }
     
     def __update_config(self):
