@@ -40,7 +40,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "4.7.2" # 修复到期记录无法正确删除关联文件和 history
+    plugin_version = "5.7.2" # 修复到期记录无法正确删除关联文件和 history
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
