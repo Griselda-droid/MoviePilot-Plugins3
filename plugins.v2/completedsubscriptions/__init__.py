@@ -41,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.10" # 修复批量删除时 history 对象批量过期的问题
+    plugin_version = "5.7.11" # 删除前预先快照所有 history 对象
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -250,9 +250,13 @@ class CompletedSubscriptions(_PluginBase):
             if not transfers:
                 continue
 
+            transfer_snapshots = [
+                self.__snapshot_transfer(transfer)
+                for transfer in transfers
+            ]
             associated_files = []
-            for transfer in transfers:
-                for fileitem in self.__get_transfer_fileitems(transfer):
+            for transfer in transfer_snapshots:
+                for fileitem in transfer["fileitems"]:
                     associated_files.append(fileitem.get("path"))
 
             cleanup_results.append({
@@ -265,6 +269,8 @@ class CompletedSubscriptions(_PluginBase):
                 },
                 "downloads": [],
                 "transfers": transfers,
+                "download_snapshots": [],
+                "transfer_snapshots": transfer_snapshots,
                 "files": associated_files,
                 "transfer_cleanup": True
             })
@@ -492,6 +498,14 @@ class CompletedSubscriptions(_PluginBase):
                 associated_files = []
                 downloads = self.__get_related_downloads(item)
                 transfers = self.__get_related_transfers(item, downloads)
+                download_snapshots = [
+                    self.__snapshot_download(download)
+                    for download in downloads
+                ]
+                transfer_snapshots = [
+                    self.__snapshot_transfer(transfer)
+                    for transfer in transfers
+                ]
                 for transfer in transfers:
                     existing_transfer_ids.add(transfer.id)
                     for fileitem in self.__get_transfer_fileitems(transfer):
@@ -500,6 +514,8 @@ class CompletedSubscriptions(_PluginBase):
                     "history_item": item,
                     "downloads": downloads,
                     "transfers": transfers,
+                    "download_snapshots": download_snapshots,
+                    "transfer_snapshots": transfer_snapshots,
                     "files": associated_files
                 })
 
@@ -514,14 +530,8 @@ class CompletedSubscriptions(_PluginBase):
                 deleted_items_for_page = []
                 for result in results:
                     item = result["history_item"]
-                    downloads = [
-                        self.__snapshot_download(download)
-                        for download in result.get("downloads") or []
-                    ]
-                    transfers = [
-                        self.__snapshot_transfer(transfer)
-                        for transfer in result.get("transfers") or []
-                    ]
+                    downloads = result.get("download_snapshots") or []
+                    transfers = result.get("transfer_snapshots") or []
                     deleted_file_paths = set()
                     
                     for transfer in transfers:
@@ -552,7 +562,16 @@ class CompletedSubscriptions(_PluginBase):
 
                     item_name = self.__get_item_value(item, "name", "未知标题")
                     item_user = self.__get_item_value(item, "username", "未知用户")
+                    item_date = self.__get_item_value(item, "date", "未知时间")
                     item_image = self.__get_item_value(item, "poster") or self.__get_item_value(item, "backdrop")
+                    item_snapshot = {
+                        "name": item_name,
+                        "username": item_user,
+                        "date": item_date,
+                        "poster": item_image,
+                        "backdrop": None
+                    }
+                    result["history_item"] = item_snapshot
 
                     if not result.get("transfer_cleanup"):
                         item_id = item.id
