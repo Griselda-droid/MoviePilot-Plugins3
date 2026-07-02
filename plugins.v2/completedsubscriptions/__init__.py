@@ -41,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.8" # 修复删除记录分页，并增加整理记录遗留清理
+    plugin_version = "5.7.9" # 修复删除模式下 history 对象脱离会话的问题
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -503,32 +503,40 @@ class CompletedSubscriptions(_PluginBase):
                     deleted_file_paths = set()
                     
                     for transfer in transfers:
-                        for fileitem in self.__get_transfer_fileitems(transfer):
+                        transfer_id = transfer.id
+                        transfer_title = transfer.title
+                        transfer_src = transfer.src
+                        transfer_src_fileitem = transfer.src_fileitem
+                        transfer_fileitems = self.__get_transfer_fileitems(transfer)
+                        for fileitem in transfer_fileitems:
                             file_path = fileitem.get("path")
                             if not file_path or file_path in deleted_file_paths:
                                 continue
                             deleted_file_paths.add(file_path)
                             try:
                                 self.storage_chain.delete_file(FileItem(**fileitem))
-                                if transfer.src_fileitem and file_path == transfer.src_fileitem.get("path"):
-                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
+                                if transfer_src_fileitem and file_path == transfer_src_fileitem.get("path"):
+                                    eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer_src})
                             except Exception as err:
                                 logger.warning(f"删除文件失败: {file_path}，错误: {err}")
-                        self.transfer_history_oper.delete(transfer.id)
-                        logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
+                        self.transfer_history_oper.delete(transfer_id)
+                        logger.info(f"已删除整理 history 记录: {transfer_title} (ID: {transfer_id})")
 
                     for download in downloads:
-                        self.download_history_oper.delete_history(download.id)
-                        logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
+                        download_id = download.id
+                        download_title = download.title
+                        self.download_history_oper.delete_history(download_id)
+                        logger.info(f"已删除下载 history 记录: {download_title} (ID: {download_id})")
 
                     item_name = self.__get_item_value(item, "name", "未知标题")
                     item_user = self.__get_item_value(item, "username", "未知用户")
                     item_image = self.__get_item_value(item, "poster") or self.__get_item_value(item, "backdrop")
 
                     if not result.get("transfer_cleanup"):
+                        item_id = item.id
                         # 删除订阅 history 记录
-                        SubscribeHistory.delete(db, item.id)
-                        logger.info(f"已删除订阅 history 记录: {item_name} (ID: {item.id})")
+                        SubscribeHistory.delete(db, item_id)
+                        logger.info(f"已删除订阅 history 记录: {item_name} (ID: {item_id})")
 
                         # 将被删除的条目信息添加到列表中，用于更新详情页
                         deleted_items_for_page.append({
