@@ -41,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.7" # 修复删除记录分页，并增加整理记录遗留清理
+    plugin_version = "5.7.4" # 修复删除记录分页，并增加整理记录遗留清理
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -222,35 +222,36 @@ class CompletedSubscriptions(_PluginBase):
             if delete_time:
                 query = query.filter(TransferHistory.date <= deleted_item.get("delete_time"))
 
-            transfers = query.all()
-            for transfer in transfers:
+            transfers = []
+            for transfer in query.all():
                 if transfer.id in existing_transfer_ids:
                     continue
-                
-                # 提前读取所有数据，不保留ORM对象，彻底修复Session报错
-                fileitems = self.__get_transfer_fileitems(transfer)
-                if not fileitems:
+                if not self.__get_transfer_fileitems(transfer):
                     continue
-
-                # 纯数据结构，完全脱离ORM
-                cleanup_item = {
-                    "transfer_id": transfer.id,
-                    "title": transfer.title,
-                    "src": transfer.src,
-                    "src_fileitem": transfer.src_fileitem,
-                    "fileitems": fileitems,
-                    "history_item": {
-                        "name": title,
-                        "username": deleted_item.get("user", "删除历史"),
-                        "date": f"整理记录遗留清理：{deleted_item.get('delete_time', '未知时间')}",
-                        "poster": deleted_item.get("image"),
-                        "backdrop": None
-                    },
-                    "transfer_cleanup": True,
-                    "files": [fi.get("path") for fi in fileitems if fi.get("path")]
-                }
-                cleanup_results.append(cleanup_item)
                 existing_transfer_ids.add(transfer.id)
+                transfers.append(transfer)
+
+            if not transfers:
+                continue
+
+            associated_files = []
+            for transfer in transfers:
+                for fileitem in self.__get_transfer_fileitems(transfer):
+                    associated_files.append(fileitem.get("path"))
+
+            cleanup_results.append({
+                "history_item": {
+                    "name": title,
+                    "username": deleted_item.get("user", "删除历史"),
+                    "date": f"整理记录遗留清理：{deleted_item.get('delete_time', '未知时间')}",
+                    "poster": deleted_item.get("image"),
+                    "backdrop": None
+                },
+                "downloads": [],
+                "transfers": transfers,
+                "files": associated_files,
+                "transfer_cleanup": True
+            })
 
         return cleanup_results
 
@@ -388,7 +389,7 @@ class CompletedSubscriptions(_PluginBase):
                             'content': cards
                         }
                     ]}
-                ]}
+                ]
             })
 
         return [{
@@ -493,42 +494,9 @@ class CompletedSubscriptions(_PluginBase):
                 return []
 
             # 4. 如果是删除模式，则执行删除
-            deleted_items_for_page = []
             if self._confirm_delete:
+                deleted_items_for_page = []
                 for result in results:
-                    # 识别是否为遗留清理项
-                    is_transfer_cleanup = result.get("transfer_cleanup", False)
-                    
-                    # ==================== 遗留清理专用逻辑（无ORM，彻底修复报错）====================
-                    if is_transfer_cleanup:
-                        try:
-                            transfer_id = result["transfer_id"]
-                            title = result["title"]
-                            fileitems = result["fileitems"]
-                            src = result["src"]
-                            src_fileitem = result["src_fileitem"]
-
-                            # 删除文件
-                            for fileitem in fileitems:
-                                file_path = fileitem.get("path")
-                                if not file_path:
-                                    continue
-                                try:
-                                    self.storage_chain.delete_file(FileItem(**fileitem))
-                                    if src_fileitem and file_path == src_fileitem.get("path"):
-                                        eventmanager.send_event(EventType.DownloadFileDeleted, {"src": src})
-                                except Exception as err:
-                                    logger.warning(f"删除文件失败: {file_path}，错误: {err}")
-
-                            # 删除整理记录
-                            self.transfer_history_oper.delete(transfer_id)
-                            logger.info(f"已删除整理 history 记录: {title} (ID: {transfer_id})")
-                            logger.info(f"已按整理记录清理遗留文件: {title}")
-                        except Exception as err:
-                            logger.warning(f"清理遗留项失败: {err}")
-                        continue
-
-                    # ==================== 正常清理逻辑 ====================
                     item = result["history_item"]
                     downloads = result.get("downloads") or []
                     transfers = result.get("transfers") or []
@@ -546,43 +514,36 @@ class CompletedSubscriptions(_PluginBase):
                                     eventmanager.send_event(EventType.DownloadFileDeleted, {"src": transfer.src})
                             except Exception as err:
                                 logger.warning(f"删除文件失败: {file_path}，错误: {err}")
-                        # 独立会话删除，避免对象绑定问题
-                        try:
-                            self.transfer_history_oper.delete(transfer.id)
-                            logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
-                        except:
-                            pass
+                        self.transfer_history_oper.delete(transfer.id)
+                        logger.info(f"已删除整理 history 记录: {transfer.title} (ID: {transfer.id})")
 
                     for download in downloads:
-                        try:
-                            self.download_history_oper.delete_history(download.id)
-                            logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
-                        except:
-                            pass
+                        self.download_history_oper.delete_history(download.id)
+                        logger.info(f"已删除下载 history 记录: {download.title} (ID: {download.id})")
 
                     item_name = self.__get_item_value(item, "name", "未知标题")
                     item_user = self.__get_item_value(item, "username", "未知用户")
                     item_image = self.__get_item_value(item, "poster") or self.__get_item_value(item, "backdrop")
 
-                    # 删除订阅 history 记录
-                    try:
+                    if not result.get("transfer_cleanup"):
+                        # 删除订阅 history 记录
                         SubscribeHistory.delete(db, item.id)
                         logger.info(f"已删除订阅 history 记录: {item_name} (ID: {item.id})")
-                    except:
-                        pass
 
-                    # 将被删除的条目信息添加到列表中，用于更新详情页
-                    deleted_items_for_page.append({
-                        "title": item_name,
-                        "user": item_user,
-                        "type": self.__get_item_value(item, "type"),
-                        "year": self.__get_item_value(item, "year"),
-                        "season": self.__get_item_value(item, "season"),
-                        "tmdbid": self.__get_item_value(item, "tmdbid"),
-                        "doubanid": self.__get_item_value(item, "doubanid"),
-                        "image": item_image,
-                        "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                    })
+                        # 将被删除的条目信息添加到列表中，用于更新详情页
+                        deleted_items_for_page.append({
+                            "title": item_name,
+                            "user": item_user,
+                            "type": self.__get_item_value(item, "type"),
+                            "year": self.__get_item_value(item, "year"),
+                            "season": self.__get_item_value(item, "season"),
+                            "tmdbid": self.__get_item_value(item, "tmdbid"),
+                            "doubanid": self.__get_item_value(item, "doubanid"),
+                            "image": item_image,
+                            "delete_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        })
+                    else:
+                        logger.info(f"已按整理记录清理遗留文件: {item_name}")
                 
                 # 更新详情页的删除 history
                 if deleted_items_for_page:
