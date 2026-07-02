@@ -41,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.9" # 修复删除模式下 history 对象脱离会话的问题
+    plugin_version = "5.7.10" # 修复批量删除时 history 对象批量过期的问题
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -127,6 +127,22 @@ class CompletedSubscriptions(_PluginBase):
                     fileitems.append(fileitem)
 
         return fileitems
+
+    def __snapshot_transfer(self, transfer):
+        return {
+            "id": transfer.id,
+            "title": transfer.title,
+            "src": transfer.src,
+            "src_fileitem": transfer.src_fileitem,
+            "fileitems": self.__get_transfer_fileitems(transfer)
+        }
+
+    @staticmethod
+    def __snapshot_download(download):
+        return {
+            "id": download.id,
+            "title": download.title
+        }
 
     def __get_related_downloads(self, item):
         """
@@ -498,16 +514,22 @@ class CompletedSubscriptions(_PluginBase):
                 deleted_items_for_page = []
                 for result in results:
                     item = result["history_item"]
-                    downloads = result.get("downloads") or []
-                    transfers = result.get("transfers") or []
+                    downloads = [
+                        self.__snapshot_download(download)
+                        for download in result.get("downloads") or []
+                    ]
+                    transfers = [
+                        self.__snapshot_transfer(transfer)
+                        for transfer in result.get("transfers") or []
+                    ]
                     deleted_file_paths = set()
                     
                     for transfer in transfers:
-                        transfer_id = transfer.id
-                        transfer_title = transfer.title
-                        transfer_src = transfer.src
-                        transfer_src_fileitem = transfer.src_fileitem
-                        transfer_fileitems = self.__get_transfer_fileitems(transfer)
+                        transfer_id = transfer["id"]
+                        transfer_title = transfer["title"]
+                        transfer_src = transfer["src"]
+                        transfer_src_fileitem = transfer["src_fileitem"]
+                        transfer_fileitems = transfer["fileitems"]
                         for fileitem in transfer_fileitems:
                             file_path = fileitem.get("path")
                             if not file_path or file_path in deleted_file_paths:
@@ -523,8 +545,8 @@ class CompletedSubscriptions(_PluginBase):
                         logger.info(f"已删除整理 history 记录: {transfer_title} (ID: {transfer_id})")
 
                     for download in downloads:
-                        download_id = download.id
-                        download_title = download.title
+                        download_id = download["id"]
+                        download_title = download["title"]
                         self.download_history_oper.delete_history(download_id)
                         logger.info(f"已删除下载 history 记录: {download_title} (ID: {download_id})")
 
