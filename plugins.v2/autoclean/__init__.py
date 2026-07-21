@@ -28,7 +28,7 @@ class AutoClean(_PluginBase):
     # 插件图标
     plugin_icon = "clean.png"
     # 插件版本
-    plugin_version = "2.1.4"
+    plugin_version = "2.1.3"
     # 插件作者
     plugin_author = "thsrite"
     # 作者主页
@@ -237,11 +237,6 @@ class AutoClean(_PluginBase):
                         self._transferhis.delete(history.id)
                     # 删除源文件
                     if clean_type in ["src", "all"]:
-                        if not history.src_fileitem:
-                            logger.warning(
-                                f"跳过清理源文件 id={history.id}：src_fileitem 为 None"
-                            )
-                            continue
                         src_fileitem = schemas.FileItem(**history.src_fileitem)
                         StorageChain().delete_file(src_fileitem)
                         # 发送事件
