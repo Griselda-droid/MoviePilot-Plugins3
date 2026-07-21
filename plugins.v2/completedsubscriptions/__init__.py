@@ -41,7 +41,7 @@ class CompletedSubscriptions(_PluginBase):
     plugin_name = "订阅历史清理工具"
     plugin_desc = "查询订阅 history，并根据设定条件过滤、输出，或删除关联的媒体文件和历史记录。"
     plugin_icon = "https://raw.githubusercontent.com/InfinityPacer/MoviePilot-Plugins/main/icons/subscribeassistant.png"
-    plugin_version = "5.7.11" # 删除前预先快照所有 history 对象
+    plugin_version = "5.7.12" # 修复 fileitem 为 None 时的报错
     plugin_author = "Gemini & 用户"
     author_url = "https://github.com/InfinityPacer/MoviePilot-Plugins"
     plugin_config_prefix = "sub_history_cleaner_"
@@ -541,6 +541,9 @@ class CompletedSubscriptions(_PluginBase):
                         transfer_src_fileitem = transfer["src_fileitem"]
                         transfer_fileitems = transfer["fileitems"]
                         for fileitem in transfer_fileitems:
+                            if not isinstance(fileitem, dict):
+                                logger.warning(f"跳过无效文件记录: {fileitem}")
+                                continue
                             file_path = fileitem.get("path")
                             if not file_path or file_path in deleted_file_paths:
                                 continue
